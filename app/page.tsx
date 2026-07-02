@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Header from "@/components/Header";
 
 export default function Home() {
   const [goal, setGoal] = useState("");
@@ -30,7 +31,6 @@ export default function Home() {
       });
 
       const data = await res.json();
-
       setResult(data.result);
     } catch {
       setResult("エラーが発生しました。");
@@ -40,64 +40,107 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-100 p-8">
-      <div className="mx-auto max-w-3xl rounded-2xl bg-white p-8 shadow-xl">
+    <>
+      <Header />
 
-        <h1 className="text-4xl font-bold">
-          🚀 Project Atlas
-        </h1>
+      <main className="min-h-screen bg-zinc-100">
+        <div className="mx-auto max-w-6xl px-6 py-12">
 
-        <p className="mt-2 text-zinc-600">
-          AIが90日以内の収益化プランを作成します。
-        </p>
+          <div className="mb-10 text-center">
+            <h1 className="text-5xl font-bold tracking-tight">
+              ATLAS
+            </h1>
 
-        <div className="mt-8 space-y-4">
+            <p className="mt-4 text-xl text-zinc-600">
+              あなた専属のAI共同創業者
+            </p>
 
-          <input
-            className="w-full rounded-lg border p-3"
-            placeholder="目標収益（例：月5万円）"
-            value={goal}
-            onChange={(e)=>setGoal(e.target.value)}
-          />
+            <p className="mt-2 text-zinc-500">
+              利益を最優先に、90日以内の初収益を設計します。
+            </p>
+          </div>
 
-          <input
-            className="w-full rounded-lg border p-3"
-            placeholder="得意なこと"
-            value={skill}
-            onChange={(e)=>setSkill(e.target.value)}
-          />
+          <div className="grid gap-8 lg:grid-cols-2">
 
-          <input
-            className="w-full rounded-lg border p-3"
-            placeholder="使える時間"
-            value={time}
-            onChange={(e)=>setTime(e.target.value)}
-          />
+            <div className="rounded-2xl bg-white p-8 shadow-lg">
 
-          <input
-            className="w-full rounded-lg border p-3"
-            placeholder="興味ジャンル"
-            value={interest}
-            onChange={(e)=>setInterest(e.target.value)}
-          />
+              <h2 className="mb-6 text-2xl font-bold">
+                あなたについて教えてください
+              </h2>
 
-          <button
-            onClick={createPlan}
-            disabled={loading}
-            className="w-full rounded-lg bg-black p-3 text-white"
-          >
-            {loading ? "AIが考えています..." : "収益プランを作成"}
-          </button>
+              <div className="space-y-5">
+
+                <input
+                  className="w-full rounded-xl border p-4"
+                  placeholder="目標収益（月5万円など）"
+                  value={goal}
+                  onChange={(e) => setGoal(e.target.value)}
+                />
+
+                <input
+                  className="w-full rounded-xl border p-4"
+                  placeholder="得意なこと"
+                  value={skill}
+                  onChange={(e) => setSkill(e.target.value)}
+                />
+
+                <input
+                  className="w-full rounded-xl border p-4"
+                  placeholder="1日に使える時間"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                />
+
+                <input
+                  className="w-full rounded-xl border p-4"
+                  placeholder="興味ジャンル"
+                  value={interest}
+                  onChange={(e) => setInterest(e.target.value)}
+                />
+
+                <button
+                  onClick={createPlan}
+                  disabled={loading}
+                  className="w-full rounded-xl bg-black p-4 text-lg font-semibold text-white transition hover:bg-zinc-800"
+                >
+                  {loading ? "ATLASが分析中..." : "ATLASに相談する"}
+                </button>
+
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white p-8 shadow-lg">
+
+              <h2 className="mb-6 text-2xl font-bold">
+                AI分析結果
+              </h2>
+
+              {result ? (
+                <div className="whitespace-pre-wrap rounded-xl bg-zinc-100 p-6 leading-8">
+                  {result}
+                </div>
+              ) : (
+                <div className="rounded-xl border-2 border-dashed border-zinc-300 p-10 text-center text-zinc-500">
+
+                  <div className="text-5xl mb-4">
+                    🚀
+                  </div>
+
+                  <p>
+                    入力するとATLASが
+                    <br />
+                    あなた専用の収益化プランを作成します。
+                  </p>
+
+                </div>
+              )}
+
+            </div>
+
+          </div>
 
         </div>
-
-        {result && (
-          <div className="mt-8 whitespace-pre-wrap rounded-xl bg-zinc-100 p-6">
-            {result}
-          </div>
-        )}
-
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
