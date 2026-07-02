@@ -128,3 +128,16 @@
     @apply font-sans;
   }
 }
+.prose h1,
+.prose h2,
+.prose h3 {
+  margin-top: 1.2rem;
+}
+
+.prose ul {
+  margin-top: .5rem;
+}
+
+.prose li {
+  margin: .25rem 0;
+}

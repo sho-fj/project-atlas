@@ -1,11 +1,11 @@
 "use client";
 
+import ReactMarkdown from "react-markdown";
 import { useState } from "react";
 import Header from "@/components/Header";
 
 export default function Home() {
- const [message, setMessage] = useState("");
-
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
 
@@ -20,8 +20,9 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-  message,
-}),
+          message,
+        }),
+      });
 
       const data = await res.json();
       setResult(data.result);
@@ -38,7 +39,6 @@ export default function Home() {
 
       <main className="min-h-screen bg-zinc-100">
         <div className="mx-auto max-w-6xl px-6 py-12">
-
           <div className="mb-10 text-center">
             <h1 className="text-5xl font-bold tracking-tight">
               ATLAS
@@ -54,18 +54,15 @@ export default function Home() {
           </div>
 
           <div className="grid gap-8 lg:grid-cols-2">
-
             <div className="rounded-2xl bg-white p-8 shadow-lg">
-
               <h2 className="mb-6 text-2xl font-bold">
                 あなたについて教えてください
               </h2>
 
               <div className="space-y-5">
-
-                <<textarea
-  className="w-full rounded-xl border p-4 min-h-[220px]"
-  placeholder={`例）
+                <textarea
+                  className="min-h-[220px] w-full rounded-xl border p-4"
+                  placeholder={`例）
 
 会社員です。
 副業経験はありません。
@@ -75,51 +72,44 @@ export default function Home() {
 月5万円の副収入が欲しいです。
 
 AIに興味があります。`}
-  value={message}
-  onChange={(e) => setMessage(e.target.value)}
-/>
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                />
 
                 <button
                   onClick={createPlan}
                   disabled={loading}
-                  className="w-full rounded-xl bg-black p-4 text-lg font-semibold text-white transition hover:bg-zinc-800"
+                  className="w-full rounded-xl bg-black p-4 text-lg font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-50"
                 >
                   {loading ? "ATLASが分析中..." : "ATLASに相談する"}
                 </button>
-
               </div>
             </div>
 
             <div className="rounded-2xl bg-white p-8 shadow-lg">
-
               <h2 className="mb-6 text-2xl font-bold">
                 AI分析結果
               </h2>
 
               {result ? (
-                <div className="whitespace-pre-wrap rounded-xl bg-zinc-100 p-6 leading-8">
-                  {result}
-                </div>
+                <div className="rounded-xl bg-zinc-100 p-6">
+  <article className="prose prose-zinc max-w-none">
+    <ReactMarkdown>{result}</ReactMarkdown>
+  </article>
+</div>
               ) : (
                 <div className="rounded-xl border-2 border-dashed border-zinc-300 p-10 text-center text-zinc-500">
-
-                  <div className="text-5xl mb-4">
-                    🚀
-                  </div>
+                  <div className="mb-4 text-5xl">🚀</div>
 
                   <p>
                     入力するとATLASが
                     <br />
                     あなた専用の収益化プランを作成します。
                   </p>
-
                 </div>
               )}
-
             </div>
-
           </div>
-
         </div>
       </main>
     </>
