@@ -4,10 +4,7 @@ import { useState } from "react";
 import Header from "@/components/Header";
 
 export default function Home() {
-  const [goal, setGoal] = useState("");
-  const [skill, setSkill] = useState("");
-  const [time, setTime] = useState("");
-  const [interest, setInterest] = useState("");
+ const [message, setMessage] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
@@ -23,12 +20,8 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          goal,
-          skill,
-          time,
-          interest,
-        }),
-      });
+  message,
+}),
 
       const data = await res.json();
       setResult(data.result);
@@ -70,33 +63,21 @@ export default function Home() {
 
               <div className="space-y-5">
 
-                <input
-                  className="w-full rounded-xl border p-4"
-                  placeholder="目標収益（月5万円など）"
-                  value={goal}
-                  onChange={(e) => setGoal(e.target.value)}
-                />
+                <<textarea
+  className="w-full rounded-xl border p-4 min-h-[220px]"
+  placeholder={`例）
 
-                <input
-                  className="w-full rounded-xl border p-4"
-                  placeholder="得意なこと"
-                  value={skill}
-                  onChange={(e) => setSkill(e.target.value)}
-                />
+会社員です。
+副業経験はありません。
 
-                <input
-                  className="w-full rounded-xl border p-4"
-                  placeholder="1日に使える時間"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                />
+毎日2時間使えます。
 
-                <input
-                  className="w-full rounded-xl border p-4"
-                  placeholder="興味ジャンル"
-                  value={interest}
-                  onChange={(e) => setInterest(e.target.value)}
-                />
+月5万円の副収入が欲しいです。
+
+AIに興味があります。`}
+  value={message}
+  onChange={(e) => setMessage(e.target.value)}
+/>
 
                 <button
                   onClick={createPlan}
