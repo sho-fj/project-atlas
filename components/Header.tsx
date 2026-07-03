@@ -1,20 +1,30 @@
-export default function Header() {
-  return (
-    <header className="border-b border-zinc-200 bg-white">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            ATLAS
-          </h1>
+type HeaderProps = {
+  profileAccuracy?: number;
+  missionDone?: number;
+  missionTotal?: number;
+};
 
-          <p className="mt-1 text-sm text-zinc-500">
-            あなた専属のAI共同創業者
-          </p>
+export default function Header({
+  profileAccuracy = 0,
+  missionDone = 0,
+  missionTotal = 0,
+}: HeaderProps) {
+  return (
+    <header className="sticky top-0 z-20 border-b border-atlas-border bg-atlas-card/90 backdrop-blur">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <div>
+          <h1 className="text-2xl font-black tracking-normal text-atlas-primary">ATLAS</h1>
+          <p className="mt-1 text-[13px] font-bold text-atlas-text-muted">Revenue Operating System</p>
         </div>
 
-        <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm">
-          Beta
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="atlas-badge">
+            Profile Accuracy {profileAccuracy}%
+          </div>
+          <div className="atlas-badge">
+            Mission {missionDone}/{missionTotal}
+          </div>
+        </div>
       </div>
     </header>
   );
