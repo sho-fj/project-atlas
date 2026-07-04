@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Brain,
@@ -425,6 +425,44 @@ export default function HomePage() {
     window.localStorage.removeItem("atlas-user-name");
   };
 
+  const handleResetAtlasData = () => {
+    [
+      "atlas-profile",
+      "atlas-interview-answers",
+      "atlas-profile-version",
+      "atlas-profile-accuracy",
+      "atlas-profile-updated-at",
+      "atlas-user-name",
+      "atlas-missions",
+      "atlas-mission-history",
+      "atlas-conversation-history",
+      "atlas-ghost-count",
+    ].forEach((key) => window.localStorage.removeItem(key));
+
+    setAtlasProfile(null);
+    setInterviewAnswers([]);
+    setMissions([]);
+    setMissionHistory([]);
+    setConversationHistory([]);
+    setUserName("");
+    setUserNameDraft("");
+    setIsReInterview(false);
+    setInterviewIndex(0);
+    setInterviewQueue(createInitialInterviewQueue(false));
+    setResult(null);
+    setLoadingComplete(false);
+    setMemory({
+      goal: "未設定",
+      todayMission: "未設定",
+      trust: 1,
+      level: 1,
+      lastConversation: "面談前",
+      homework: "初回面談を完了する",
+    });
+    setAtlasComment("Profile生成後、戦略を作成する。");
+    setScreen("welcome");
+  };
+
   const runAtlas = async (profile: AtlasProfile, answers: InterviewAnswer[]) => {
     const legacyProfile = buildLegacyProfile(profile, answers);
     const interviewSummary = answers.map((item) => `${item.question}: ${item.answer}`).join("\n");
@@ -578,6 +616,11 @@ export default function HomePage() {
             missions={missions}
             progressPercent={progressPercent}
             completedMissionCount={completedMissionCount}
+            userName={userName}
+            userNameDraft={userNameDraft}
+            onUserNameDraftChange={setUserNameDraft}
+            onSaveUserName={handleSaveUserName}
+            onResetAtlasData={handleResetAtlasData}
             onContinue={() => setScreen("mission")}
             onNewConsultation={handleStartInterview}
           />
@@ -911,6 +954,11 @@ function DashboardScreen({
   missions,
   progressPercent,
   completedMissionCount,
+  userName,
+  userNameDraft,
+  onUserNameDraftChange,
+  onSaveUserName,
+  onResetAtlasData,
   onContinue,
   onNewConsultation,
 }: {
@@ -920,9 +968,20 @@ function DashboardScreen({
   missions: MissionItem[];
   progressPercent: number;
   completedMissionCount: number;
+  userName: string;
+  userNameDraft: string;
+  onUserNameDraftChange: (value: string) => void;
+  onSaveUserName: () => void;
+  onResetAtlasData: () => void;
   onContinue: () => void;
   onNewConsultation: () => void;
 }) {
+  const dashboardRef = useRef<HTMLElement | null>(null);
+  const missionRef = useRef<HTMLElement | null>(null);
+  const profileRef = useRef<HTMLElement | null>(null);
+  const insightRef = useRef<HTMLDivElement | null>(null);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const missionTotal = missions.length || 3;
   const missionItems = missions.length > 0
     ? missions.slice(0, 4)
@@ -931,13 +990,44 @@ function DashboardScreen({
         { id: "offer", label: "提案文を1つ更新", done: false },
         { id: "sales", label: "見込み客へ3件送信", done: false },
       ];
+  const scrollToSection = (target: HTMLElement | null) => {
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const handleSidebarNavigation = (target: string) => {
+    if (target === "dashboard") {
+      scrollToSection(dashboardRef.current);
+      return;
+    }
+
+    if (target === "mission") {
+      scrollToSection(missionRef.current);
+      return;
+    }
+
+    if (target === "profile") {
+      scrollToSection(profileRef.current);
+      return;
+    }
+
+    if (target === "insight") {
+      scrollToSection(insightRef.current);
+      return;
+    }
+
+    if (target === "history") {
+      setShowHistoryModal(true);
+      return;
+    }
+
+    setShowSettingsModal(true);
+  };
   const navItems = [
-    { label: "Dashboard", icon: Home },
-    { label: "Mission", icon: ListChecks },
-    { label: "Profile", icon: UserCircle },
-    { label: "Insight", icon: Lightbulb },
-    { label: "History", icon: History },
-    { label: "Settings", icon: Settings },
+    { label: "Dashboard", icon: Home, target: "dashboard" },
+    { label: "Mission", icon: ListChecks, target: "mission" },
+    { label: "Profile", icon: UserCircle, target: "profile" },
+    { label: "Insight", icon: Lightbulb, target: "insight" },
+    { label: "History", icon: History, target: "history" },
+    { label: "Settings", icon: Settings, target: "settings" },
   ];
 
   return (
@@ -962,7 +1052,7 @@ function DashboardScreen({
                 <button
                   key={item.label}
                   type="button"
-                  onClick={index === 1 ? onContinue : undefined}
+                  onClick={() => handleSidebarNavigation(item.target)}
                   className={`flex items-center gap-3 rounded-[14px] px-3 py-3 text-sm font-black transition duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 ${
                     index === 0 ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
                   }`}
@@ -976,7 +1066,7 @@ function DashboardScreen({
         </aside>
 
         <div className="grid gap-5">
-          <section className="relative overflow-hidden rounded-[28px] bg-[radial-gradient(circle_at_82%_18%,rgba(95,168,160,0.18),transparent_30%),linear-gradient(135deg,#182033_0%,#202A43_58%,#F8FAFC_145%)] p-6 text-white shadow-[0_22px_58px_rgba(24,32,51,0.18)] sm:p-8">
+          <section ref={dashboardRef} className="scroll-mt-24 relative overflow-hidden rounded-[28px] bg-[radial-gradient(circle_at_82%_18%,rgba(95,168,160,0.18),transparent_30%),linear-gradient(135deg,#182033_0%,#202A43_58%,#F8FAFC_145%)] p-6 text-white shadow-[0_22px_58px_rgba(24,32,51,0.18)] sm:p-8">
             <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
             <div className="relative z-10">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1021,7 +1111,7 @@ function DashboardScreen({
             </div>
           </section>
 
-          <section className="rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
+          <section ref={missionRef} className="scroll-mt-24 rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-black text-slate-950">Today&apos;s Mission</h2>
               <p className="text-xs font-bold text-slate-400">前回: {lastCompletedMission}</p>
@@ -1050,10 +1140,13 @@ function DashboardScreen({
         </div>
 
         <aside className="grid gap-5">
-          <FounderCompassCard />
+          <div ref={insightRef} className="scroll-mt-24">
+            <FounderCompassCard />
+          </div>
           <MemoryDeltaCard completedMissionCount={completedMissionCount} />
-          <section className="rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
-            <h2 className="text-base font-black text-slate-950">Progress</h2>
+          <section ref={profileRef} className="scroll-mt-24 rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
+            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">Profile Generation</p>
+            <h2 className="mt-2 text-base font-black text-slate-950">Progress</h2>
             <div className="mt-4 grid gap-3">
               <ImageStat label="Profile Accuracy" value={`${profile.accuracy}%`} />
               <ImageStat label="Mission" value={`${completedMissionCount}/${missionTotal}`} />
@@ -1065,7 +1158,93 @@ function DashboardScreen({
           </section>
         </aside>
       </div>
+
+      {showHistoryModal && (
+        <DashboardModal title="History" onClose={() => setShowHistoryModal(false)}>
+          <p className="text-sm font-bold leading-7 text-slate-500">
+            Mission HistoryはComing Soon。次のSprintで実行履歴と判断ログを統合します。
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowHistoryModal(false)}
+            className="mt-5 flex min-h-11 w-full items-center justify-center rounded-[14px] bg-[#182033] px-4 text-sm font-black text-white transition duration-200 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+          >
+            閉じる
+          </button>
+        </DashboardModal>
+      )}
+
+      {showSettingsModal && (
+        <DashboardModal title="Settings" onClose={() => setShowSettingsModal(false)}>
+          <div className="grid gap-5">
+            <label className="grid gap-2">
+              <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Nickname</span>
+              <input
+                value={userNameDraft}
+                onChange={(event) => onUserNameDraftChange(event.target.value)}
+                placeholder={userName || "ニックネーム"}
+                className="min-h-12 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-bold text-slate-950 outline-none transition duration-200 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+              />
+            </label>
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onSaveUserName();
+                  setShowSettingsModal(false);
+                }}
+                className="flex min-h-11 items-center justify-center rounded-[14px] bg-[#182033] px-4 text-sm font-black text-white transition duration-200 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              >
+                ニックネーム変更
+              </button>
+              <button
+                type="button"
+                onClick={onNewConsultation}
+                className="flex min-h-11 items-center justify-center rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              >
+                Profile再生成
+              </button>
+              <button
+                type="button"
+                onClick={onResetAtlasData}
+                className="flex min-h-11 items-center justify-center rounded-[14px] border border-rose-100 bg-rose-50 px-4 text-sm font-black text-rose-700 transition duration-200 hover:bg-rose-100 focus:outline-none focus:ring-4 focus:ring-rose-100"
+              >
+                データ初期化
+              </button>
+            </div>
+          </div>
+        </DashboardModal>
+      )}
     </section>
+  );
+}
+
+function DashboardModal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm">
+      <section className="w-full max-w-md rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_24px_70px_rgba(15,23,42,0.22)]">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-black text-slate-950">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Modalを閉じる"
+            className="flex h-9 w-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white text-sm font-black text-slate-500 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+          >
+            ×
+          </button>
+        </div>
+        <div className="mt-5">{children}</div>
+      </section>
+    </div>
   );
 }
 
