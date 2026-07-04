@@ -798,7 +798,7 @@ function NameSettingPanel({
         <input
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
-          placeholder="例: Sho"
+          placeholder="ニックネームを入力"
           className="h-11 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-bold text-slate-900 outline-none transition duration-200 placeholder:text-slate-300 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
         />
         <div className="flex flex-wrap gap-2">
