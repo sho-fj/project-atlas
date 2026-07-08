@@ -50,7 +50,8 @@ type AtlasMemory = {
 type ResultScreenProps = {
   result: Result;
   memory: AtlasMemory;
-  onRestart: () => void;
+  onDashboard: () => void;
+  onNewConsultation: () => void;
 };
 
 type VerdictConfig = {
@@ -128,7 +129,8 @@ const fallbackDontDo = [
 export default function ResultScreen({
   result,
   memory,
-  onRestart,
+  onDashboard,
+  onNewConsultation,
 }: ResultScreenProps) {
   const ui = verdictConfig[result.verdict];
   const missionItems = buildMissionItems(result);
@@ -367,16 +369,40 @@ export default function ResultScreen({
             </p>
           </section>
 
-          <div className="grid gap-3">
-            <button
-              type="button"
-              onClick={onRestart}
-              className="flex h-14 items-center justify-center gap-2 rounded-[18px] border border-slate-200 bg-white px-5 text-base font-black text-slate-600 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
-            >
-              <RotateCcw className="h-5 w-5" />
-              別案を見る
-            </button>
-          </div>
+          <section className="rounded-[30px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(79,70,229,0.08)] sm:p-6">
+            <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">
+                  NEXT STEP
+                </p>
+                <h2 className="mt-2 text-3xl font-black tracking-normal text-slate-950">
+                  次の一歩へ。
+                </h2>
+                <p className="mt-3 whitespace-pre-line text-sm font-bold leading-7 text-slate-500">
+                  {`今日の一歩を確認したら、\n次へ進みましょう。`}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:min-w-64">
+                <button
+                  type="button"
+                  onClick={onDashboard}
+                  className="flex min-h-14 items-center justify-center gap-2 rounded-[18px] bg-[#182033] px-5 text-base font-black text-white shadow-[0_14px_30px_rgba(24,32,51,0.14)] transition duration-200 hover:-translate-y-0.5 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                >
+                  ダッシュボードへ進む
+                  <ArrowRight className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNewConsultation}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-[16px] border border-slate-200 bg-white px-5 text-sm font-black text-slate-600 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  別の相談を始める
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </section>

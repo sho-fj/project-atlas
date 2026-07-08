@@ -555,12 +555,6 @@ export default function HomePage() {
     void runAtlas(atlasProfile, interviewAnswers);
   };
 
-  const handleRestart = () => {
-    setResult(null);
-    setLoadingComplete(false);
-    setScreen("welcome");
-  };
-
   const toggleMission = (missionId: string) => {
     setMissions((previous) => {
       const targetMission = previous.find((mission) => mission.id === missionId);
@@ -769,17 +763,14 @@ export default function HomePage() {
 
         {screen === "result" && result && (
           <div className="space-y-6">
-            <div className="mx-auto flex w-full max-w-7xl flex-wrap gap-3">
-              <TopActions onDashboard={handleDashboardReturn} onNewConsultation={handleStartInterview} />
-              {atlasProfile && (
-                <button
-                  type="button"
-                  onClick={() => setScreen("profile")}
-                  className="rounded-[14px] border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-600 transition duration-200 hover:bg-slate-50"
-                >
-                  Profileへ戻る
-                </button>
-              )}
+            <div className="sticky top-[82px] z-10 mx-auto flex w-full max-w-7xl justify-start">
+              <button
+                type="button"
+                onClick={handleDashboardReturn}
+                className="inline-flex min-h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white/90 px-3 text-xs font-black text-slate-600 shadow-[0_8px_20px_rgba(15,23,42,0.06)] backdrop-blur transition duration-200 hover:-translate-y-0.5 hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              >
+                ← ダッシュボード
+              </button>
             </div>
             {missions.length > 0 && (
               <MissionPanel
@@ -791,7 +782,12 @@ export default function HomePage() {
                 onToggleMission={toggleMission}
               />
             )}
-            <ResultScreen result={result} memory={memory} onRestart={handleRestart} />
+            <ResultScreen
+              result={result}
+              memory={memory}
+              onDashboard={handleDashboardReturn}
+              onNewConsultation={handleStartInterview}
+            />
           </div>
         )}
       </main>
