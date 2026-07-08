@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Brain,
   CheckCircle2,
-  History,
   Home,
   Lightbulb,
   ListChecks,
@@ -38,6 +37,7 @@ import { resolveStrategy, type StrategyState } from "@/lib/atlas/strategy";
 import { resolveFounderTimeline, type FounderTimelineState } from "@/lib/atlas/timeline";
 
 type Screen =
+  | "firstRun"
   | "brief"
   | "welcome"
   | "boot"
@@ -137,6 +137,8 @@ const ghostMessages = [
   "売上に近い行動を選べ。",
 ];
 
+const firstRunStorageKey = "atlas-first-run-started";
+
 function readStoredValue<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") {
     return fallback;
@@ -233,6 +235,7 @@ export default function HomePage() {
       const storedConversationHistory = readStoredValue<ConversationEntry[]>("atlas-conversation-history", []);
       const storedUserName = readStoredText("atlas-user-name");
       const hasStoredProfile = Boolean(storedProfile);
+      const hasStartedFirstRun = window.localStorage.getItem(firstRunStorageKey) === "true";
 
       setAtlasProfile(storedProfile);
       setInterviewAnswers(storedAnswers);
@@ -243,7 +246,7 @@ export default function HomePage() {
       setUserNameDraft(storedUserName);
       setIsReInterview(hasStoredProfile);
       setInterviewQueue(createInitialInterviewQueue(hasStoredProfile));
-      setScreen(hasStoredProfile ? "brief" : "welcome");
+      setScreen(hasStoredProfile ? "brief" : hasStartedFirstRun ? "welcome" : "firstRun");
       setMounted(true);
     }, 0);
 
@@ -328,6 +331,7 @@ export default function HomePage() {
   const handleStartInterview = () => {
     const nextIsReInterview = Boolean(atlasProfile);
 
+    window.localStorage.setItem(firstRunStorageKey, "true");
     setInterviewIndex(0);
     setInterviewAnswers([]);
     setIsReInterview(nextIsReInterview);
@@ -437,6 +441,7 @@ export default function HomePage() {
       "atlas-mission-history",
       "atlas-conversation-history",
       "atlas-ghost-count",
+      firstRunStorageKey,
     ].forEach((key) => window.localStorage.removeItem(key));
 
     setAtlasProfile(null);
@@ -460,7 +465,7 @@ export default function HomePage() {
       homework: "初回面談を完了する",
     });
     setAtlasComment("Profile生成後、戦略を作成する。");
-    setScreen("welcome");
+    setScreen("firstRun");
   };
 
   const runAtlas = async (profile: AtlasProfile, answers: InterviewAnswer[]) => {
@@ -583,6 +588,7 @@ export default function HomePage() {
       return nextMissions;
     });
   };
+  const isFirstRunScreen = screen === "firstRun";
 
   return (
     <div className="atlas-page">
@@ -590,6 +596,8 @@ export default function HomePage() {
         profileAccuracy={atlasProfile?.accuracy ?? 0}
         missionDone={completedMissionCount}
         missionTotal={missions.length}
+        tagline={isFirstRunScreen ? "次の一歩を決めるAI" : undefined}
+        hideMetrics={isFirstRunScreen}
       />
 
       <main className="px-4 py-8 sm:px-6 sm:py-12">
@@ -607,6 +615,8 @@ export default function HomePage() {
         )}
 
         <GhostEventModal isOpen={showGhostEvent} onClose={() => setShowGhostEvent(false)} messages={ghostMessages} />
+
+        {screen === "firstRun" && <FirstRunScreen onStart={handleStartInterview} />}
 
         {screen === "brief" && atlasProfile && (
           <DashboardScreen
@@ -786,6 +796,54 @@ export default function HomePage() {
         )}
       </main>
     </div>
+  );
+}
+
+function FirstRunScreen({ onStart }: { onStart: () => void }) {
+  return (
+    <section className="mx-auto flex min-h-[calc(100vh-132px)] w-full max-w-4xl items-center">
+      <div className="w-full overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
+        <div className="h-1 bg-[#5FA8A0]" />
+        <div className="grid gap-8 p-6 sm:p-9 lg:grid-cols-[1fr_0.8fr] lg:items-center">
+          <div>
+            <p className="text-[12px] font-black uppercase tracking-[0.22em] text-[#25736C]">Atlas</p>
+            <p className="mt-4 whitespace-nowrap text-sm font-black text-slate-500 sm:text-base">
+              副業や新しい挑戦を、前に進めたい人へ。
+            </p>
+            <h1 className="mt-5 whitespace-pre-line text-5xl font-black leading-[1.05] tracking-normal text-slate-950 sm:text-6xl">
+              {`迷うな。\n進め。`}
+            </h1>
+            <p className="mt-6 max-w-xl whitespace-pre-line text-xl font-black leading-9 text-slate-800 sm:text-2xl sm:leading-10">
+              {`副業や新しい挑戦の迷いを整理して、\n「今やる」\n「今は待つ」\n「今はやらない」\nを判断し、\n今日の一歩を決めます。`}
+            </p>
+            <p className="mt-5 text-base font-bold text-slate-500">
+              3分。長い入力は必要ありません。
+            </p>
+            <button
+              type="button"
+              onClick={onStart}
+              className="mt-8 flex min-h-14 w-full items-center justify-center gap-2 rounded-[18px] bg-[#182033] px-6 text-base font-black text-white shadow-[0_16px_36px_rgba(24,32,51,0.16)] transition duration-200 hover:-translate-y-0.5 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100 sm:w-auto"
+            >
+              次の一歩を決める
+              <ArrowRight className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="rounded-[24px] border border-slate-200 bg-[#F4F6F8] p-5">
+            <div className="grid gap-3">
+              {["悩みを整理", "判断を分ける", "今日の一歩を決める"].map((item, index) => (
+                <div key={item} className="flex items-center gap-3 rounded-[18px] bg-white px-4 py-4">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#5FA8A0]/12 text-sm font-black text-[#25736C]">
+                    {index + 1}
+                  </span>
+                  <span className="text-sm font-black text-slate-900">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -980,7 +1038,6 @@ function DashboardScreen({
   const missionRef = useRef<HTMLElement | null>(null);
   const profileRef = useRef<HTMLElement | null>(null);
   const insightRef = useRef<HTMLDivElement | null>(null);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const missionTotal = missions.length || 3;
   const missionItems = missions.length > 0
@@ -1014,11 +1071,6 @@ function DashboardScreen({
       return;
     }
 
-    if (target === "history") {
-      setShowHistoryModal(true);
-      return;
-    }
-
     setShowSettingsModal(true);
   };
   const navItems = [
@@ -1026,7 +1078,6 @@ function DashboardScreen({
     { label: "Mission", icon: ListChecks, target: "mission" },
     { label: "Profile", icon: UserCircle, target: "profile" },
     { label: "Insight", icon: Lightbulb, target: "insight" },
-    { label: "History", icon: History, target: "history" },
     { label: "Settings", icon: Settings, target: "settings" },
   ];
 
@@ -1158,21 +1209,6 @@ function DashboardScreen({
           </section>
         </aside>
       </div>
-
-      {showHistoryModal && (
-        <DashboardModal title="History" onClose={() => setShowHistoryModal(false)}>
-          <p className="text-sm font-bold leading-7 text-slate-500">
-            Mission HistoryはComing Soon。次のSprintで実行履歴と判断ログを統合します。
-          </p>
-          <button
-            type="button"
-            onClick={() => setShowHistoryModal(false)}
-            className="mt-5 flex min-h-11 w-full items-center justify-center rounded-[14px] bg-[#182033] px-4 text-sm font-black text-white transition duration-200 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
-          >
-            閉じる
-          </button>
-        </DashboardModal>
-      )}
 
       {showSettingsModal && (
         <DashboardModal title="Settings" onClose={() => setShowSettingsModal(false)}>

@@ -367,19 +367,7 @@ export default function ResultScreen({
             </p>
           </section>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <button
-              type="button"
-              className="h-14 rounded-[18px] bg-gradient-to-r from-[#5FA8A0] to-indigo-500 px-5 text-base font-black text-white shadow-[0_16px_34px_rgba(95,168,160,0.24)] transition duration-200 hover:-translate-y-0.5 hover:scale-[1.01] focus:outline-none focus:ring-4 focus:ring-indigo-100"
-            >
-              今日やる
-            </button>
-            <button
-              type="button"
-              className="h-14 rounded-[18px] border border-indigo-100 bg-white px-5 text-base font-black text-slate-800 transition duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
-            >
-              明日やる
-            </button>
+          <div className="grid gap-3">
             <button
               type="button"
               onClick={onRestart}
