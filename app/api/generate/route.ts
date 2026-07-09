@@ -340,6 +340,21 @@ function buildPrompt(payload: GeneratePayload) {
     '- Write labels like "件名：" and "挨拶：" as normal text, not Markdown.',
   ].join("\n");
 
+  const missionReadinessRules = [
+    "Mission Readiness Rules:",
+    "- Before creating todayMission, inspect Atlas Profile, Interview Answers, Mission History, completed Missions, Memory, Summary, and Conversation History.",
+    "- Decide todayMission in this order: 1) confirm what the user has already decided, 2) identify prerequisites for the next action, 3) if prerequisites are missing, assign the immediately previous prerequisite-building Mission, 4) only if prerequisites are ready, assign the smallest execution Mission.",
+    "- The Mission must be doable today, preferably within 60 minutes, low risk, minimal in scope, and must not skip the previous stage.",
+    "- Do not assign company sales outreach unless target customer, customer problem, and offered value are already clear.",
+    "- Do not assign proposal-writing unless who receives it and what is offered are already clear.",
+    "- Do not assign price-setting unless the offer or deliverable is already clear.",
+    "- As a rule, do not assign development before demand has been checked.",
+    "- Do not assign advertising before a small response test has been done.",
+    "- Do not assign incorporation, hiring, tooling purchases, or other large investments before initial revenue validation.",
+    "- If the user's current position is unclear, prefer a prerequisite Mission such as listing three values they can provide, choosing one smallest testable offer, or tentatively deciding whose problem they will solve.",
+    "- Preserve the existing Mission detail structure: title, action, deliverable, doneCriteria, timeEstimate, example.",
+  ].join("\n");
+
   return `${exampleFormatting}
 
 あなたはAtlas。ユーザーの制約を踏まえて、今日そのまま着手できるMissionを返します。
@@ -384,6 +399,8 @@ JSON:
 - exampleを自然に作れないMissionではexampleを省略してよい
 - ユーザーが提供していない実績、顧客名、導入事例、売上実績を捏造しない
 - 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
+
+${missionReadinessRules}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
