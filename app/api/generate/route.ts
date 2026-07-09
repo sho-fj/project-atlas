@@ -65,6 +65,12 @@ type GeneratePayload = {
   interviewAnswers?: InterviewAnswerInput[];
 };
 
+const emptySalesSimulation: AtlasResult["salesSimulation"] = {
+  price: "",
+  requiredSales: "",
+  targetProfit: "",
+};
+
 const defaultResult: AtlasResult = {
   verdict: "GO",
   conclusion: "Profileから逆算。今日60分で価格検証と販売接触を開始する。",
@@ -89,11 +95,7 @@ const defaultResult: AtlasResult = {
     "Phase2: 初回販売を取る",
     "Phase3: 再現性を上げる",
   ],
-  salesSimulation: {
-    price: "10,000円",
-    requiredSales: "3件",
-    targetProfit: "30,000円",
-  },
+  salesSimulation: emptySalesSimulation,
   dontDo: ["ロゴ調整", "長期開発", "販売前の作り込み"],
   todayMission: ["競合価格を3件確認", "提案価格を修正", "3件へ送信"],
   atlasComment: "完成度より販売接触を優先。今回は売れるかどうかを最優先に変更しました。",
@@ -115,6 +117,7 @@ function buildSafeFallbackResult(
 
   return {
     ...defaultResult,
+    salesSimulation: emptySalesSimulation,
     decisionLog: [`${reasonLabel[reason]}を検知`, ...decisionLog].slice(0, 5),
     atlasComment: `API応答を取得できません。${reasonLabel[reason]}のため、保存済みProfileと安全なfallbackから暫定Missionを生成しました。`,
     atlasOneLine: "暫定Mission。API状態を確認してから再生成。",
@@ -164,6 +167,7 @@ function normalizeResult(
   } catch {
     return {
       ...defaultResult,
+      salesSimulation: emptySalesSimulation,
       decisionLog: fallbackDecisionLog,
       atlasComment: fallbackAtlasComment,
     };

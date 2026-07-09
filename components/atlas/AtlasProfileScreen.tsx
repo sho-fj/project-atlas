@@ -48,7 +48,6 @@ export default function AtlasProfileScreen({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <InfoCard label="Profile Accuracy" value={`${profile.accuracy}%`} />
               <InfoCard label="Profile Version" value={profile.version} />
             </div>
           </div>

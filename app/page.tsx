@@ -6,7 +6,6 @@ import {
   Brain,
   CheckCircle2,
   Home,
-  Lightbulb,
   ListChecks,
   RotateCcw,
   Settings,
@@ -119,9 +118,9 @@ const emptyResult: AtlasResult = {
   sevenDayPlan: ["Day1: 候補10件抽出", "Day2: 提案文作成", "Day3: 5件送信"],
   ninetyDayPlan: ["Phase1: 売れる仮説を作る", "Phase2: 初回販売を取る", "Phase3: 再現性を上げる"],
   salesSimulation: {
-    price: "10,000円",
-    requiredSales: "3件",
-    targetProfit: "30,000円",
+    price: "",
+    requiredSales: "",
+    targetProfit: "",
   },
   dontDo: ["長期開発", "販売前の作り込み", "新機能追加"],
   todayMission: ["候補10件抽出", "提案文1本作成", "3件送信"],
@@ -287,7 +286,7 @@ export default function HomePage() {
   }, [completedMissionCount, missions.length]);
   const lastCompletedMission = useMemo(() => {
     const completed = missions.filter((mission) => mission.done);
-    return completed.at(-1)?.label ?? missions[0]?.label ?? "競合10社調査";
+    return completed.at(-1)?.label ?? "";
   }, [missions]);
   const strategy = useMemo(() => resolveStrategy(progressPercent), [progressPercent]);
   const founderTimeline = useMemo(
@@ -587,7 +586,6 @@ export default function HomePage() {
   return (
     <div className="atlas-page">
       <Header
-        profileAccuracy={atlasProfile?.accuracy ?? 0}
         missionDone={completedMissionCount}
         missionTotal={missions.length}
         tagline={isFirstRunScreen ? "次の一歩を決めるAI" : undefined}
@@ -614,7 +612,6 @@ export default function HomePage() {
 
         {screen === "brief" && atlasProfile && (
           <DashboardScreen
-            profile={atlasProfile}
             lastCompletedMission={lastCompletedMission}
             timeline={founderTimeline}
             missions={missions}
@@ -785,12 +782,11 @@ export default function HomePage() {
                 showNextStep={false}
               />
             )}
-            <ResultScreen
-              result={result}
-              memory={memory}
-              onDashboard={handleDashboardReturn}
-              onNewConsultation={handleStartInterview}
-            />
+          <ResultScreen
+            result={result}
+            onDashboard={handleDashboardReturn}
+            onNewConsultation={handleStartInterview}
+          />
           </div>
         )}
       </main>
@@ -961,7 +957,6 @@ function WelcomePanel({
               <div>
                 <p className="text-[12px] font-black uppercase tracking-[0.22em] text-slate-400">Atlas Profile</p>
                 <div className="mt-5 grid gap-3">
-                  <InfoCard label="Profile Accuracy" value={`${profile.accuracy}%`} />
                   <InfoCard label="最終面談" value={formatDate(profile.updatedAt)} />
                 </div>
                 <div className="mt-5 grid gap-3">
@@ -978,7 +973,7 @@ function WelcomePanel({
             ) : (
               <div>
                 <div className="rounded-[20px] border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-black text-slate-950">Profile Accuracy 0%</p>
+                  <p className="text-sm font-black text-slate-950">初回面談前</p>
                   <p className="mt-2 text-sm font-bold leading-6 text-slate-500">初回面談前。ボタン選択のみ。</p>
                 </div>
                 <button
@@ -1005,7 +1000,6 @@ function WelcomePanel({
 }
 
 function DashboardScreen({
-  profile,
   lastCompletedMission,
   timeline,
   missions,
@@ -1019,7 +1013,6 @@ function DashboardScreen({
   onContinue,
   onNewConsultation,
 }: {
-  profile: AtlasProfile;
   lastCompletedMission: string;
   timeline: FounderTimelineState;
   missions: MissionItem[];
@@ -1036,16 +1029,9 @@ function DashboardScreen({
   const dashboardRef = useRef<HTMLElement | null>(null);
   const missionRef = useRef<HTMLElement | null>(null);
   const profileRef = useRef<HTMLElement | null>(null);
-  const insightRef = useRef<HTMLDivElement | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const missionTotal = missions.length || 3;
-  const missionItems = missions.length > 0
-    ? missions.slice(0, 4)
-    : [
-        { id: "market", label: "競合価格を3件確認", done: false },
-        { id: "offer", label: "提案文を1つ更新", done: false },
-        { id: "sales", label: "見込み客へ3件送信", done: false },
-      ];
+  const missionTotal = missions.length;
+  const missionItems = missions.slice(0, 4);
   const scrollToSection = (target: HTMLElement | null) => {
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -1065,18 +1051,12 @@ function DashboardScreen({
       return;
     }
 
-    if (target === "insight") {
-      scrollToSection(insightRef.current);
-      return;
-    }
-
     setShowSettingsModal(true);
   };
   const navItems = [
     { label: "Dashboard", icon: Home, target: "dashboard" },
     { label: "Mission", icon: ListChecks, target: "mission" },
     { label: "Profile", icon: UserCircle, target: "profile" },
-    { label: "Insight", icon: Lightbulb, target: "insight" },
     { label: "Settings", icon: Settings, target: "settings" },
   ];
 
@@ -1130,15 +1110,13 @@ function DashboardScreen({
                 </button>
               </div>
               <h1 className="mt-8 text-4xl font-black leading-tight tracking-normal sm:text-5xl">
-                今日は「価格改善」を優先。
+                今日のMissionを確認。
               </h1>
               <p className="mt-4 max-w-xl text-base font-bold leading-7 text-white/70">
                 Profileを確認。優先順位を再計算し、本日の最適行動を提示します。
               </p>
 
-              <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-3">
-                <HeroMetric label="期待値" value="92%" />
-                <HeroMetric label="所要時間" value="45分" />
+              <div className="mt-7 grid max-w-sm gap-3">
                 <HeroMetric label="Mission" value={`${completedMissionCount}/${missionTotal}`} />
               </div>
 
@@ -1151,12 +1129,6 @@ function DashboardScreen({
                   Missionを開始
                   <ArrowRight className="h-4 w-4" />
                 </button>
-                <a
-                  href="#founder-compass"
-                  className="rounded-[16px] border border-white/25 bg-white/10 px-5 py-3 text-sm font-black text-white transition duration-200 hover:-translate-y-0.5 hover:bg-white/15 focus:outline-none focus:ring-4 focus:ring-white/25"
-                >
-                  理由を見る
-                </a>
               </div>
             </div>
           </section>
@@ -1164,10 +1136,19 @@ function DashboardScreen({
           <section ref={missionRef} className="scroll-mt-24 rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-black text-slate-950">Today&apos;s Mission</h2>
-              <p className="text-xs font-bold text-slate-400">前回: {lastCompletedMission}</p>
+              {lastCompletedMission && (
+                <p className="text-xs font-bold text-slate-400">前回: {lastCompletedMission}</p>
+              )}
             </div>
             <div className="grid gap-2">
-              {missionItems.map((mission, index) => (
+              {missionItems.length === 0 ? (
+                <div className="rounded-[18px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
+                  <p className="text-sm font-black text-slate-900">まだミッションはありません。</p>
+                  <p className="mt-2 whitespace-pre-line text-sm font-bold leading-6 text-slate-500">
+                    {`相談を始めると、\nここに次の行動が表示されます。`}
+                  </p>
+                </div>
+              ) : missionItems.map((mission, index) => (
                 <button
                   key={mission.id}
                   type="button"
@@ -1190,15 +1171,11 @@ function DashboardScreen({
         </div>
 
         <aside className="grid gap-5">
-          <div ref={insightRef} className="scroll-mt-24">
-            <FounderCompassCard />
-          </div>
           <MemoryDeltaCard completedMissionCount={completedMissionCount} />
           <section ref={profileRef} className="scroll-mt-24 rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
             <p className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">Profile Generation</p>
             <h2 className="mt-2 text-base font-black text-slate-950">Progress</h2>
             <div className="mt-4 grid gap-3">
-              <ImageStat label="Profile Accuracy" value={`${profile.accuracy}%`} />
               <ImageStat label="Mission" value={`${completedMissionCount}/${missionTotal}`} />
               <ImageStat label="Day" value={`${timeline.currentDay}/90`} />
               <ImageStat label="Phase" value={timeline.activePhase.label} />
@@ -1283,55 +1260,14 @@ function DashboardModal({
   );
 }
 
-function FounderCompassCard() {
-  const dontDo = ["ロゴ調整", "長期開発", "新機能追加"];
-
-  return (
-    <section id="founder-compass" className="rounded-[24px] border border-slate-200/70 bg-white p-5 shadow-[0_18px_44px_rgba(15,23,42,0.055)]">
-      <p className="text-[12px] font-black uppercase tracking-[0.2em] text-slate-400">Founder Compass</p>
-      <div className="mt-4 rounded-[20px] border border-[#5FA8A0]/20 bg-[#F1FAF8] p-5">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-[#25736C]">今日の判断</p>
-        <h2 className="mt-2 text-2xl font-black tracking-normal text-slate-950">価格改善を優先</h2>
-        <div className="mt-4 flex items-end justify-between rounded-[16px] bg-white px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">期待値</p>
-          <p className="text-3xl font-black text-[#25736C]">92%</p>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3">
-        <div className="rounded-[18px] bg-indigo-50 px-4 py-4">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-400">理由</p>
-          <p className="mt-2 text-sm font-black leading-7 text-slate-800">
-            昨日の検証結果では、販売数より単価改善の期待値が高い。
-          </p>
-        </div>
-      </div>
-      <div className="mt-5">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">今日やらないこと</p>
-        <div className="mt-3 grid gap-2">
-          {dontDo.map((item) => (
-            <div key={item} className="rounded-[14px] bg-slate-50 px-3 py-2 text-sm font-black text-slate-600">
-              {item}
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function MemoryDeltaCard({ completedMissionCount }: { completedMissionCount: number }) {
   const completedLabel = completedMissionCount > 0 ? `${completedMissionCount}件完了` : "未完了";
-  const trustDelta = completedMissionCount > 0 ? `+${Math.min(completedMissionCount * 2, 8)}%` : "+0%";
-  const changes = [
-    `Missionを${completedLabel}`,
-    `信頼度 ${trustDelta}`,
-    "興味: AI販売 → SaaSへ変化",
-  ];
+  const changes = [`Missionを${completedLabel}`];
 
   return (
     <section className="rounded-[24px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(15,23,42,0.07)]">
       <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">Founder Memory</p>
-      <h2 className="mt-2 text-xl font-black tracking-normal text-slate-950">前回からの変化</h2>
+      <h2 className="mt-2 text-xl font-black tracking-normal text-slate-950">Mission履歴</h2>
       <div className="mt-5 grid gap-3">
         {changes.map((change) => (
           <div key={change} className="flex items-start gap-3 rounded-[16px] bg-indigo-50/70 px-3 py-3">
@@ -1382,7 +1318,12 @@ function MissionPanel({
         </div>
 
         {missions.length === 0 ? (
-          <p className="mt-6 text-sm font-bold leading-7 text-slate-500">ProfileからMissionを生成してください。</p>
+          <div className="mt-6 rounded-[18px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
+            <p className="text-sm font-black text-slate-900">まだミッションはありません。</p>
+            <p className="mt-2 whitespace-pre-line text-sm font-bold leading-6 text-slate-500">
+              {`相談を始めると、\nここに次の行動が表示されます。`}
+            </p>
+          </div>
         ) : (
           <div className="mt-6 grid gap-3">
             {missions.map((mission, index) => (
@@ -1405,7 +1346,7 @@ function MissionPanel({
                 <span>
                   <span className="block text-sm font-black leading-6">{mission.label}</span>
                   <span className="mt-1 block text-xs font-bold text-slate-400">
-                    {mission.done ? "処理済み。Memoryへ反映。" : `${index + 1}/${missionTotal} / 本日の最適行動`}
+                    {mission.done ? "処理済み。履歴に記録。" : `${index + 1}/${missionTotal} / 本日の最適行動`}
                   </span>
                 </span>
                 <span className={`rounded-full px-2 py-1 text-center text-xs font-black ${

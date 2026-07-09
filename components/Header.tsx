@@ -1,5 +1,4 @@
 type HeaderProps = {
-  profileAccuracy?: number;
   missionDone?: number;
   missionTotal?: number;
   tagline?: string;
@@ -7,7 +6,6 @@ type HeaderProps = {
 };
 
 export default function Header({
-  profileAccuracy = 0,
   missionDone = 0,
   missionTotal = 0,
   tagline = "Revenue Operating System",
@@ -23,9 +21,6 @@ export default function Header({
 
         {!hideMetrics && (
           <div className="flex flex-wrap items-center gap-2">
-            <div className="atlas-badge">
-              Profile Accuracy {profileAccuracy}%
-            </div>
             <div className="atlas-badge">
               Mission {missionDone}/{missionTotal}
             </div>

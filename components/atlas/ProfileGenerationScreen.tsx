@@ -7,7 +7,7 @@ const generationLogs = [
   "Analyzing Values...",
   "Analyzing Strength...",
   "Estimating Strategy...",
-  "Calculating Accuracy...",
+  "Finalizing Profile...",
   "Profile Generated",
 ];
 

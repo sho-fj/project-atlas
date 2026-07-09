@@ -38,18 +38,8 @@ type Result = {
   nextStep: string;
 };
 
-type AtlasMemory = {
-  goal: string;
-  todayMission: string;
-  trust: number;
-  level: number;
-  lastConversation: string;
-  homework: string;
-};
-
 type ResultScreenProps = {
   result: Result;
-  memory: AtlasMemory;
   onDashboard: () => void;
   onNewConsultation: () => void;
 };
@@ -57,13 +47,8 @@ type ResultScreenProps = {
 type VerdictConfig = {
   label: string;
   title: string;
-  score: number;
-  successRate: string;
-  difficulty: string;
-  revenueExpectation: string;
   icon: ReactNode;
   accent: string;
-  soft: string;
   text: string;
 };
 
@@ -71,37 +56,22 @@ const verdictConfig: Record<Verdict, VerdictConfig> = {
   GO: {
     label: "GO",
     title: "実行推奨",
-    score: 86,
-    successRate: "72%",
-    difficulty: "中",
-    revenueExpectation: "高",
     icon: <CheckCircle2 className="h-8 w-8" />,
     accent: "from-emerald-500 to-teal-500",
-    soft: "bg-emerald-50 text-emerald-600",
     text: "text-emerald-500",
   },
   HOLD: {
     label: "HOLD",
     title: "条件調整",
-    score: 58,
-    successRate: "46%",
-    difficulty: "中-高",
-    revenueExpectation: "中",
     icon: <PauseCircle className="h-8 w-8" />,
     accent: "from-amber-500 to-orange-500",
-    soft: "bg-amber-50 text-amber-600",
     text: "text-amber-500",
   },
   STOP: {
     label: "STOP",
     title: "停止推奨",
-    score: 31,
-    successRate: "24%",
-    difficulty: "高",
-    revenueExpectation: "低",
     icon: <XCircle className="h-8 w-8" />,
     accent: "from-rose-500 to-red-500",
-    soft: "bg-rose-50 text-rose-600",
     text: "text-rose-500",
   },
 };
@@ -114,12 +84,6 @@ const fallbackDecisionLog = [
   "90日以内を優先",
 ];
 
-const fallbackMissions = [
-  "候補10件を抽出",
-  "提案文を1本作成",
-  "3件へ送信",
-];
-
 const fallbackDontDo = [
   "ロゴ調整",
   "長期開発",
@@ -128,7 +92,6 @@ const fallbackDontDo = [
 
 export default function ResultScreen({
   result,
-  memory,
   onDashboard,
   onNewConsultation,
 }: ResultScreenProps) {
@@ -136,6 +99,13 @@ export default function ResultScreen({
   const missionItems = buildMissionItems(result);
   const decisionItems = buildDecisionItems(result);
   const riskyActions = (result.dontDo.length > 0 ? result.dontDo : fallbackDontDo).slice(0, 3);
+  const judgmentNotes = buildJudgmentNotes(result);
+  const hasSalesSimulation = Boolean(
+    !isFallbackResult(result)
+      && result.salesSimulation.price?.trim()
+      && result.salesSimulation.requiredSales?.trim()
+      && result.salesSimulation.targetProfit?.trim(),
+  );
   const salesSimulation = [
     {
       label: "販売価格",
@@ -189,69 +159,56 @@ export default function ResultScreen({
                 <p className="mt-6 max-w-3xl text-2xl font-black leading-10 text-slate-950">
                   {result.conclusion}
                 </p>
-                <p className="mt-3 max-w-2xl text-base font-bold leading-7 text-slate-500">
-                  {result.atlasOneLine || "理由、戦略、行動を接続。今日のMissionへ移行します。"}
-                </p>
-
-                <div className="mt-7 h-3 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${ui.accent} transition-all duration-200`}
-                    style={{ width: `${ui.score}%` }}
-                  />
-                </div>
-
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <Metric label="成功率" value={ui.successRate} />
-                  <Metric label="難易度" value={ui.difficulty} />
-                  <Metric label="収益期待" value={ui.revenueExpectation} />
-                </div>
+                {result.atlasOneLine && (
+                  <p className="mt-3 max-w-2xl text-base font-bold leading-7 text-slate-500">
+                    {result.atlasOneLine}
+                  </p>
+                )}
               </div>
 
               <div className="rounded-[28px] bg-[#182033] p-5 text-white shadow-[0_16px_42px_rgba(24,32,51,0.16)]">
                 <p className="text-[12px] font-black uppercase tracking-[0.22em] text-white/45">
-                  Execution Score
+                  Next Action
                 </p>
-                <p className="mt-2 text-6xl font-black tracking-normal">
-                  {ui.score}
+                <p className="mt-3 text-lg font-black leading-8">
+                  {result.nextStep}
                 </p>
-                <div className="mt-5 rounded-[20px] border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs font-black uppercase tracking-[0.18em] text-white/40">
-                    Next Action
-                  </p>
-                  <p className="mt-2 text-sm font-bold leading-7 text-white/75">
-                    {result.nextStep}
-                  </p>
-                </div>
               </div>
             </div>
           </section>
 
           <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
             <Panel eyebrow="Block 01" title="今日のMission" icon={<Clock3 className="h-5 w-5" />}>
-              <div className="grid gap-3">
-                {missionItems.map((mission, index) => (
-                  <div
-                    key={`${mission}-${index}`}
-                    className="grid min-h-14 grid-cols-[28px_minmax(0,1fr)_56px] items-center gap-3 rounded-[20px] border border-slate-100 bg-white px-4 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-[9px] border border-indigo-200 bg-indigo-50 text-indigo-600">
-                      <CheckCircle2 className="h-4 w-4" />
-                    </span>
-                    <p className="min-w-0 text-sm font-black leading-6 text-slate-800">
-                      {mission}
-                    </p>
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-center text-[11px] font-black text-slate-500">
-                      P{index + 1}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {missionItems.length === 0 ? (
+                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
+                  <p className="text-sm font-black text-slate-900">Missionを生成できませんでした。</p>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {missionItems.map((mission, index) => (
+                    <div
+                      key={`${mission}-${index}`}
+                      className="grid min-h-14 grid-cols-[28px_minmax(0,1fr)_56px] items-center gap-3 rounded-[20px] border border-slate-100 bg-white px-4 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.04)]"
+                    >
+                      <span className="flex h-7 w-7 items-center justify-center rounded-[9px] border border-indigo-200 bg-indigo-50 text-indigo-600">
+                        <CheckCircle2 className="h-4 w-4" />
+                      </span>
+                      <p className="min-w-0 text-sm font-black leading-6 text-slate-800">
+                        {mission}
+                      </p>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-center text-[11px] font-black text-slate-500">
+                        P{index + 1}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Panel>
 
             <Panel eyebrow="Block 02" title="Decision Log" icon={<CheckCircle2 className="h-5 w-5" />}>
               <div className="rounded-[22px] border border-indigo-100 bg-indigo-50/70 p-4">
                 <p className="text-sm font-black leading-7 text-slate-800">
-                  Atlasは以下の理由で今回の戦略を採用しました。
+                  Atlasは以下の理由で今回の判断を作成しました。
                 </p>
               </div>
               <div className="mt-4 grid gap-2.5">
@@ -269,42 +226,40 @@ export default function ResultScreen({
                   </div>
                 ))}
               </div>
-              <p className="mt-4 rounded-[18px] bg-[#182033] px-4 py-3 text-sm font-bold leading-7 text-white/75">
-                {result.atlasComment || "完成度より販売接触を優先。売れるかどうかを最優先に変更しました。"}
-              </p>
+              {result.atlasComment && (
+                <p className="mt-4 rounded-[18px] bg-[#182033] px-4 py-3 text-sm font-bold leading-7 text-white/75">
+                  {result.atlasComment}
+                </p>
+              )}
             </Panel>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
             <Panel eyebrow="Block 03" title="Sales Simulation" icon={<BarChart3 className="h-5 w-5" />}>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {salesSimulation.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-[22px] border border-indigo-100 bg-white p-4 shadow-[0_10px_28px_rgba(79,70,229,0.06)]"
-                  >
-                    <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-[16px] bg-indigo-50 text-indigo-600">
-                      {item.icon}
+              {hasSalesSimulation ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {salesSimulation.map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-[22px] border border-indigo-100 bg-white p-4 shadow-[0_10px_28px_rgba(79,70,229,0.06)]"
+                    >
+                      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-[16px] bg-indigo-50 text-indigo-600">
+                        {item.icon}
+                      </div>
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+                        {item.label}
+                      </p>
+                      <p className="mt-2 text-2xl font-black text-slate-950">
+                        {item.value}
+                      </p>
                     </div>
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">
-                      {item.label}
-                    </p>
-                    <p className="mt-2 text-2xl font-black text-slate-950">
-                      {item.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4 rounded-[22px] border border-slate-200 bg-[#F4F6F8] p-4">
-                <p className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-400">
-                  Atlas Memory
-                </p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <MemoryLine label="Goal" value={memory.goal || result.conclusion} />
-                  <MemoryLine label="Trust" value={`Lv.${memory.level} / ${memory.trust}`} />
+                  ))}
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
+                  <p className="text-sm font-black text-slate-900">試算データを生成できませんでした。</p>
+                </div>
+              )}
             </Panel>
 
             <Panel eyebrow="Block 04" title="Don't Do" icon={<ShieldAlert className="h-5 w-5" />}>
@@ -338,34 +293,27 @@ export default function ResultScreen({
           </section>
 
           <section className="rounded-[28px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(79,70,229,0.08)] sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">
-                  Atlas Memory
-                </p>
-                <h2 className="mt-2 text-2xl font-black tracking-normal text-slate-950">
-                  Atlasが記憶しました
-                </h2>
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">
+                今回の判断メモ
+              </p>
+              <h2 className="mt-2 text-2xl font-black tracking-normal text-slate-950">
+                この相談は、このブラウザの履歴に保存されます。
+              </h2>
+            </div>
+
+            {judgmentNotes.length > 0 && (
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {judgmentNotes.map((item) => (
+                  <div key={item} className="flex items-start gap-3 rounded-[18px] bg-indigo-50/60 px-4 py-3">
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
+                    <p className="text-sm font-black leading-6 text-slate-800">
+                      {item}
+                    </p>
+                  </div>
+                ))}
               </div>
-              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-black text-indigo-600">
-                次回へ反映
-              </span>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              {buildCapturedMemory(result, memory).map((item) => (
-                <div key={item} className="flex items-start gap-3 rounded-[18px] bg-indigo-50/60 px-4 py-3">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
-                  <p className="text-sm font-black leading-6 text-slate-800">
-                    {item}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <p className="mt-5 rounded-[20px] bg-[#182033] px-4 py-3 text-sm font-bold leading-7 text-white/75">
-              次回以降の提案へ反映します。
-            </p>
+            )}
           </section>
 
           <section className="rounded-[30px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(79,70,229,0.08)] sm:p-6">
@@ -439,38 +387,12 @@ function Panel({
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[22px] border border-indigo-100 bg-white p-4 shadow-[0_10px_28px_rgba(79,70,229,0.06)]">
-      <p className="text-[12px] font-black uppercase tracking-[0.18em] text-slate-400">
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-black text-slate-950">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function MemoryLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[16px] bg-white px-3 py-3">
-      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">
-        {label}
-      </p>
-      <p className="mt-1 line-clamp-2 text-sm font-black leading-6 text-slate-800">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function buildMissionItems(result: Result) {
   const source = result.todayMission.length > 0 ? result.todayMission : result.todayPlan;
 
-  return (source.length > 0 ? source : fallbackMissions).slice(0, 4).map((item) =>
+  return source.slice(0, 4).map((item) =>
     item.replace(/^\d{2}:\d{2}〜\d{2}:\d{2}\s*/, "").trim(),
-  );
+  ).filter(Boolean);
 }
 
 function buildDecisionItems(result: Result) {
@@ -483,23 +405,21 @@ function buildDecisionItems(result: Result) {
   return source.slice(0, 5);
 }
 
-function buildCapturedMemory(result: Result, memory: AtlasMemory) {
-  const source = [
+function isFallbackResult(result: Result) {
+  const fallbackText = [
+    result.atlasComment,
+    result.atlasOneLine,
+    result.nextStep,
+  ].join(" ");
+
+  return /\bAPI\b/i.test(fallbackText) && /fallback/i.test(fallbackText);
+}
+
+function buildJudgmentNotes(result: Result) {
+  return [
     result.decisionLog[0],
     result.decisionLog[1],
-    result.todayMission[0] || memory.todayMission,
+    result.todayMission[0],
     result.atlasComment,
-  ].filter((item): item is string => Boolean(item && item.trim()));
-
-  if (source.length >= 4) {
-    return source.slice(0, 4);
-  }
-
-  return [
-    ...source,
-    "営業より仕組み作りを優先",
-    "価格改善が得意",
-    "短時間で集中するタイプ",
-    "夜に作業する傾向",
-  ].slice(0, 4);
+  ].filter((item): item is string => Boolean(item && item.trim())).slice(0, 4);
 }
