@@ -117,6 +117,16 @@ type MissionItem = {
   example?: string;
 };
 
+type MissionOutcome = "できた" | "反応待ち" | "うまくいかなかった" | "別の発見があった";
+
+type MissionContinuationResult =
+  | { status: "mission" }
+  | {
+      status: "wait";
+      reason: string;
+      resumeCondition: string;
+    };
+
 type LegacyProfile = {
   name: string;
   targetRevenue: string;
@@ -158,6 +168,7 @@ const ghostMessages = [
 ];
 
 const firstRunStorageKey = "atlas-first-run-started";
+const missionOutcomeOptions: MissionOutcome[] = ["できた", "反応待ち", "うまくいかなかった", "別の発見があった"];
 
 function getMissionTitle(mission: Pick<MissionItem, "title" | "label">) {
   return mission.title?.trim() || mission.label?.trim() || "Mission";
@@ -205,6 +216,18 @@ function toMissionItem(source: AtlasMissionDraft, index: number): MissionItem | 
     timeEstimate: source.timeEstimate?.trim() || undefined,
     example: formatMissionExample(source.example) || undefined,
   };
+}
+
+function extractMissionItems(result: AtlasApiResult) {
+  const missionSources =
+    Array.isArray(result.todayMission) && result.todayMission.length > 0
+      ? result.todayMission
+      : result.todayPlan.map((item) => item.replace(/^\d{2}:\d{2}〜\d{2}:\d{2}\s*/, "").trim()).filter(Boolean);
+
+  return missionSources
+    .slice(0, 6)
+    .map((mission, index) => toMissionItem(mission, index))
+    .filter((mission): mission is MissionItem => Boolean(mission));
 }
 
 function readStoredValue<T>(key: string, fallback: T): T {
@@ -586,15 +609,7 @@ export default function HomePage() {
 
       const data = await response.json();
       const nextResult = data.result as AtlasApiResult;
-      const missionSources = Array.isArray(nextResult.todayMission) && nextResult.todayMission.length > 0
-        ? nextResult.todayMission
-        : nextResult.todayPlan
-            .map((item) => item.replace(/^\d{2}:\d{2}〜\d{2}:\d{2}\s*/, "").trim())
-            .filter(Boolean);
-      const extractedMissions = missionSources
-        .slice(0, 6)
-        .map((mission, index) => toMissionItem(mission, index))
-        .filter((mission): mission is MissionItem => Boolean(mission));
+      const extractedMissions = extractMissionItems(nextResult);
       const normalizedResult = {
         ...nextResult,
         todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
@@ -614,6 +629,92 @@ export default function HomePage() {
       window.setTimeout(() => {
         setScreen("decision");
       }, 600);
+    }
+  };
+
+  const handleContinueMission = async (outcome: MissionOutcome): Promise<MissionContinuationResult> => {
+    if (!atlasProfile) {
+      return {
+        status: "wait",
+        reason: "Profileがまだないため、次のMissionを安全に判断できません。",
+        resumeCondition: "Profile作成後にMissionを再開する。",
+      };
+    }
+
+    const completedMissions = missions.filter((mission) => mission.done);
+    const nextConversationHistory = [
+      {
+        date: new Date().toLocaleDateString("ja-JP"),
+        content: `Mission Continuation\nOutcome: ${outcome}\nCompleted Missions:\n${completedMissions
+          .map((mission) => getMissionTitle(mission))
+          .join("\n")}`,
+      },
+      ...conversationHistory,
+    ].slice(0, 30);
+
+    setConversationHistory(nextConversationHistory);
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          answers: interviewAnswers.map((item) => `${item.question}: ${item.answer}`),
+          welcomeChoice: "Mission Continuation",
+          profile: buildLegacyProfile(atlasProfile, interviewAnswers),
+          atlasProfile,
+          interviewAnswers,
+          memory,
+          missions,
+          missionHistory,
+          conversationHistory: nextConversationHistory,
+          missionContinuation: {
+            outcome,
+            completedMissions: completedMissions.map((mission) => ({
+              title: getMissionTitle(mission),
+              action: mission.action,
+              deliverable: mission.deliverable,
+              doneCriteria: mission.doneCriteria,
+              timeEstimate: mission.timeEstimate,
+            })),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to continue mission.");
+      }
+
+      const data = await response.json();
+      const nextResult = data.result as AtlasApiResult;
+      const extractedMissions = nextResult.verdict === "GO" ? extractMissionItems(nextResult) : [];
+
+      if (extractedMissions.length > 0) {
+        setMissions(extractedMissions);
+        setResult({
+          ...nextResult,
+          todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
+        });
+        setAtlasComment(nextResult.atlasComment || atlasComment);
+        updateMemory(nextResult);
+        updateGhostCounter();
+        setScreen("mission");
+        return { status: "mission" };
+      }
+
+      return {
+        status: "wait",
+        reason: nextResult.reasons[0] || nextResult.conclusion || "次の判断材料がまだ不足しています。",
+        resumeCondition: nextResult.nextStep || "反応や結果が返ってきたら再開する。",
+      };
+    } catch {
+      return {
+        status: "wait",
+        reason: "継続Missionの判断に失敗しました。",
+        resumeCondition: "少し時間を置いてから、Mission完了画面でもう一度試す。",
+      };
     }
   };
 
@@ -827,6 +928,7 @@ export default function HomePage() {
               timeline={founderTimeline}
               onToggleMission={toggleMission}
               onDashboard={handleDashboardReturn}
+              onContinueMission={handleContinueMission}
             />
           </div>
         )}
@@ -858,6 +960,7 @@ export default function HomePage() {
                 timeline={founderTimeline}
                 onToggleMission={toggleMission}
                 onDashboard={handleDashboardReturn}
+                onContinueMission={handleContinueMission}
                 showNextStep={false}
               />
             )}
@@ -1367,6 +1470,7 @@ function MissionPanel({
   timeline,
   onToggleMission,
   onDashboard,
+  onContinueMission,
   showNextStep = true,
 }: {
   missions: MissionItem[];
@@ -1376,11 +1480,26 @@ function MissionPanel({
   timeline: FounderTimelineState;
   onToggleMission: (missionId: string) => void;
   onDashboard: () => void;
+  onContinueMission: (outcome: MissionOutcome) => Promise<MissionContinuationResult>;
   showNextStep?: boolean;
 }) {
   const missionTotal = Math.max(missions.length, 1);
+  const allMissionsDone = missions.length > 0 && missions.every((mission) => mission.done);
   const [openExampleId, setOpenExampleId] = useState<string | null>(null);
   const [copiedExampleId, setCopiedExampleId] = useState<string | null>(null);
+  const [isContinuationOpen, setIsContinuationOpen] = useState(false);
+  const [selectedOutcome, setSelectedOutcome] = useState<MissionOutcome | null>(null);
+  const [isContinuingMission, setIsContinuingMission] = useState(false);
+  const [waitResult, setWaitResult] = useState<Extract<MissionContinuationResult, { status: "wait" }> | null>(null);
+
+  useEffect(() => {
+    if (!allMissionsDone) {
+      setIsContinuationOpen(false);
+      setSelectedOutcome(null);
+      setIsContinuingMission(false);
+      setWaitResult(null);
+    }
+  }, [allMissionsDone]);
 
   const handleCopyExample = async (mission: MissionItem) => {
     const exampleText = formatMissionExample(mission.example);
@@ -1398,6 +1517,20 @@ function MissionPanel({
     } catch {
       setCopiedExampleId((current) => (current === mission.id ? null : current));
     }
+  };
+
+  const handleContinuationOutcome = async (outcome: MissionOutcome) => {
+    setSelectedOutcome(outcome);
+    setWaitResult(null);
+    setIsContinuingMission(true);
+
+    const nextResult = await onContinueMission(outcome);
+
+    if (nextResult.status === "wait") {
+      setWaitResult(nextResult);
+    }
+
+    setIsContinuingMission(false);
   };
 
   return (
@@ -1537,7 +1670,84 @@ function MissionPanel({
         </div>
       </section>
 
-      {showNextStep && (
+      {showNextStep && allMissionsDone && (
+        <section className="rounded-[30px] border border-emerald-100 bg-white p-5 shadow-[0_18px_54px_rgba(16,185,129,0.08)] sm:p-6">
+          <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.2em] text-emerald-500">MISSION COMPLETE</p>
+              <h2 className="mt-2 text-3xl font-black tracking-normal text-slate-950">一歩、進みました。</h2>
+              <p className="mt-3 whitespace-pre-line text-sm font-bold leading-7 text-slate-500">
+                {`今回の結果をもとに、\n次の一歩を決めましょう。`}
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:min-w-64">
+              {!isContinuationOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsContinuationOpen(true)}
+                  className="flex min-h-14 items-center justify-center gap-2 rounded-[18px] bg-[#182033] px-5 text-base font-black text-white shadow-[0_14px_30px_rgba(24,32,51,0.14)] transition duration-200 hover:-translate-y-0.5 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                >
+                  もう一歩進める
+                  <ArrowRight className="h-5 w-5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onDashboard}
+                className="flex min-h-12 items-center justify-center rounded-[16px] border border-slate-200 bg-white px-5 text-sm font-black text-slate-700 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              >
+                今日はここまで
+              </button>
+            </div>
+          </div>
+
+          {isContinuationOpen && (
+            <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-black text-slate-950">今回のMissionはどうでしたか？</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {missionOutcomeOptions.map((outcome) => (
+                  <button
+                    key={outcome}
+                    type="button"
+                    disabled={isContinuingMission}
+                    onClick={() => void handleContinuationOutcome(outcome)}
+                    className={`min-h-12 rounded-[16px] border px-4 text-sm font-black transition duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 disabled:cursor-wait disabled:opacity-60 ${
+                      selectedOutcome === outcome
+                        ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                        : "border-slate-200 bg-white text-slate-700 hover:-translate-y-0.5 hover:border-indigo-200 hover:text-slate-950"
+                    }`}
+                  >
+                    {outcome}
+                  </button>
+                ))}
+              </div>
+
+              {isContinuingMission && (
+                <p className="mt-3 text-sm font-bold text-slate-500">現在地を再判断しています。</p>
+              )}
+
+              {waitResult && (
+                <div className="mt-4 rounded-[18px] border border-amber-100 bg-white p-4">
+                  <p className="text-[12px] font-black uppercase tracking-[0.18em] text-amber-500">今は待つ</p>
+                  <dl className="mt-3 grid gap-3">
+                    <div>
+                      <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">理由</dt>
+                      <dd className="mt-1 text-sm font-bold leading-6 text-slate-900">{waitResult.reason}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">再開条件</dt>
+                      <dd className="mt-1 text-sm font-bold leading-6 text-slate-900">{waitResult.resumeCondition}</dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {showNextStep && !allMissionsDone && (
         <section className="rounded-[30px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(79,70,229,0.08)] sm:p-6">
           <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
             <div>

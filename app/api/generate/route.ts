@@ -82,6 +82,16 @@ type GeneratePayload = {
   conversationHistory?: Array<{ date: string; content: string }>;
   atlasProfile?: AtlasProfileInput;
   interviewAnswers?: InterviewAnswerInput[];
+  missionContinuation?: {
+    outcome: "できた" | "反応待ち" | "うまくいかなかった" | "別の発見があった";
+    completedMissions: Array<{
+      title: string;
+      action?: string;
+      deliverable?: string;
+      doneCriteria?: string;
+      timeEstimate?: string;
+    }>;
+  };
 };
 
 const emptySalesSimulation: AtlasResult["salesSimulation"] = {
@@ -226,6 +236,10 @@ function normalizeStringArray(value: unknown, fallback: string[]) {
 
 function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
   if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return [];
+    }
+
     const items = value
       .map((item): MissionDraft | null => {
         if (typeof item === "string" && item.trim()) {
@@ -331,6 +345,7 @@ function buildPrompt(payload: GeneratePayload) {
   const missionHistory = payload.missionHistory ?? [];
   const missions = payload.missions ?? [];
   const conversationHistory = payload.conversationHistory ?? [];
+  const missionContinuation = payload.missionContinuation;
   const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean).join("\n");
   const exampleFormatting = [
     "Example Formatting:",
@@ -354,6 +369,17 @@ function buildPrompt(payload: GeneratePayload) {
     "- If the user's current position is unclear, prefer a prerequisite Mission such as listing three values they can provide, choosing one smallest testable offer, or tentatively deciding whose problem they will solve.",
     "- Preserve the existing Mission detail structure: title, action, deliverable, doneCriteria, timeEstimate, example.",
   ].join("\n");
+  const missionContinuationRules = missionContinuation
+    ? [
+        "Mission Continuation Rules:",
+        "- This request is after Mission completion. Do not require a full Interview and do not ask interview questions.",
+        "- Rejudge the user's current position using Mission Outcome, Completed Mission, Atlas Profile, Mission History, and Conversation History.",
+        "- If the user can move now, return verdict GO and create the next smallest Mission in todayMission using the existing fields: title, action, deliverable, doneCriteria, timeEstimate, example.",
+        "- If the user should not move now, return verdict HOLD, return todayMission as an empty array, set conclusion to a short waiting judgment, put the reason in reasons[0], and put the restart condition in nextStep.",
+        "- For outcome '反応待ち', prefer HOLD unless there is a low-risk preparation task that does not skip the waiting step.",
+        "- For outcome 'うまくいかなかった' or '別の発見があった', use the result as evidence and choose either a smaller correction Mission or HOLD if more observation is needed.",
+      ].join("\n")
+    : "";
 
   return `${exampleFormatting}
 
@@ -401,6 +427,7 @@ JSON:
 - 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
 
 ${missionReadinessRules}
+${missionContinuationRules ? `\n${missionContinuationRules}` : ""}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
@@ -425,6 +452,18 @@ Last Conversation: ${payload.memory.lastConversation}` : "未登録"}
 
 Mission:
 ${missions.length > 0 ? missions.map((mission) => `${mission.title ?? mission.label ?? "Mission"}: ${mission.done ? "完了" : "未完了"}`).join(" / ") : "未登録"}
+
+Mission Outcome:
+${missionContinuation ? missionContinuation.outcome : "未登録"}
+
+Completed Mission Detail:
+${missionContinuation?.completedMissions.length ? missionContinuation.completedMissions.map((mission) => [
+  `Title: ${mission.title}`,
+  mission.action ? `Action: ${mission.action}` : "",
+  mission.deliverable ? `Deliverable: ${mission.deliverable}` : "",
+  mission.doneCriteria ? `Done Criteria: ${mission.doneCriteria}` : "",
+  mission.timeEstimate ? `Time Estimate: ${mission.timeEstimate}` : "",
+].filter(Boolean).join(" / ")).join("\n") : "未登録"}
 
 Mission History:
 ${missionHistory.length > 0 ? missionHistory.slice(0, 8).map((entry) => `${entry.date} / ${entry.mission} / ${entry.status}`).join("\n") : "未登録"}
