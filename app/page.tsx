@@ -750,6 +750,7 @@ export default function HomePage() {
               strategy={strategy}
               timeline={founderTimeline}
               onToggleMission={toggleMission}
+              onDashboard={handleDashboardReturn}
             />
           </div>
         )}
@@ -780,6 +781,8 @@ export default function HomePage() {
                 strategy={strategy}
                 timeline={founderTimeline}
                 onToggleMission={toggleMission}
+                onDashboard={handleDashboardReturn}
+                showNextStep={false}
               />
             )}
             <ResultScreen
@@ -1348,6 +1351,8 @@ function MissionPanel({
   strategy,
   timeline,
   onToggleMission,
+  onDashboard,
+  showNextStep = true,
 }: {
   missions: MissionItem[];
   progressPercent: number;
@@ -1355,6 +1360,8 @@ function MissionPanel({
   strategy: StrategyState;
   timeline: FounderTimelineState;
   onToggleMission: (missionId: string) => void;
+  onDashboard: () => void;
+  showNextStep?: boolean;
 }) {
   const missionTotal = Math.max(missions.length, 1);
 
@@ -1416,6 +1423,31 @@ function MissionPanel({
           <p className="mt-2 text-sm font-semibold leading-7 text-slate-950">{atlasComment}</p>
         </div>
       </section>
+
+      {showNextStep && (
+        <section className="rounded-[30px] border border-indigo-100 bg-white p-5 shadow-[0_18px_54px_rgba(79,70,229,0.08)] sm:p-6">
+          <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-center">
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">NEXT STEP</p>
+              <h2 className="mt-2 text-3xl font-black tracking-normal text-slate-950">次の判断へ。</h2>
+              <p className="mt-3 whitespace-pre-line text-sm font-bold leading-7 text-slate-500">
+                {`ミッションを確認しました。\nダッシュボードから、次の一歩を決めましょう。`}
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:min-w-64">
+              <button
+                type="button"
+                onClick={onDashboard}
+                className="flex min-h-14 items-center justify-center gap-2 rounded-[18px] bg-[#182033] px-5 text-base font-black text-white shadow-[0_14px_30px_rgba(24,32,51,0.14)] transition duration-200 hover:-translate-y-0.5 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+              >
+                ダッシュボードへ進む
+                <ArrowRight className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

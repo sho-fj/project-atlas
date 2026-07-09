@@ -334,7 +334,6 @@ export default function ResultScreen({
                   {result.nextStep}
                 </h2>
               </div>
-              <ArrowRight className="hidden h-12 w-12 text-white/70 lg:block" />
             </div>
           </section>
 
