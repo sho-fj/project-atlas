@@ -2,6 +2,15 @@ import { GoogleGenAI } from "@google/genai";
 
 type Verdict = "GO" | "HOLD" | "STOP";
 
+type MissionDraft = {
+  title: string;
+  action?: string;
+  deliverable?: string;
+  doneCriteria?: string;
+  timeEstimate?: string;
+  example?: string;
+};
+
 type AtlasResult = {
   verdict: Verdict;
   conclusion: string;
@@ -16,7 +25,7 @@ type AtlasResult = {
     targetProfit: string;
   };
   dontDo: string[];
-  todayMission: string[];
+  todayMission: MissionDraft[];
   atlasComment: string;
   atlasOneLine: string;
   nextStep: string;
@@ -58,7 +67,17 @@ type GeneratePayload = {
     lastConversation: string;
     homework: string;
   };
-  missions?: Array<{ id: string; label: string; done: boolean }>;
+  missions?: Array<{
+    id: string;
+    label?: string;
+    title?: string;
+    done: boolean;
+    action?: string;
+    deliverable?: string;
+    doneCriteria?: string;
+    timeEstimate?: string;
+    example?: string;
+  }>;
   missionHistory?: Array<{ date: string; mission: string; status: string; note: string }>;
   conversationHistory?: Array<{ date: string; content: string }>;
   atlasProfile?: AtlasProfileInput;
@@ -73,34 +92,44 @@ const emptySalesSimulation: AtlasResult["salesSimulation"] = {
 
 const defaultResult: AtlasResult = {
   verdict: "GO",
-  conclusion: "Profileから逆算。今日60分で価格検証と販売接触を開始する。",
-  reasons: ["短時間で検証できる。", "初期費用を抑えられる。", "90日以内の初収益に直結する。"],
-  decisionLog: ["90日以内を優先", "販売前の作り込みを却下", "価格改善を採用", "60分以内で実行可能", "初期費用を抑える"],
+  conclusion: "Profileから逆算。今日60分で販売接触を開始する。",
+  reasons: ["入力負荷が低い。", "初期費用を抑えられる。", "90日以内の初収益に直結する。"],
+  decisionLog: ["Profile条件を採用", "初期費用を抑える", "販売接触を優先", "60分以内で実行可能", "90日以内を優先"],
   todayPlan: [
-    "09:00〜09:15 競合価格を3件確認",
-    "09:15〜09:35 提案価格と訴求を修正",
-    "09:35〜10:00 見込み客3件へ送信",
+    "09:00-09:20 Profile条件を1枚に整理",
+    "09:20-09:40 買う可能性がある相手を10件抽出",
+    "09:40-10:00 短い提案文を3件送信",
   ],
-  sevenDayPlan: [
-    "Day1: 競合価格を3件確認",
-    "Day2: 提案文を1本作成",
-    "Day3: 見込み客3件へ送信",
-    "Day4: 反応を記録",
-    "Day5: 価格を修正",
-    "Day6: 再送信",
-    "Day7: 初回販売の可能性を判定",
-  ],
-  ninetyDayPlan: [
-    "Phase1: 売れる可能性を確認する",
-    "Phase2: 初回販売を取る",
-    "Phase3: 再現性を上げる",
-  ],
+  sevenDayPlan: ["Day1: 候補10件抽出", "Day2: 提案文作成", "Day3: 5件送信"],
+  ninetyDayPlan: ["Phase1: 売れる仮説を作る", "Phase2: 初回販売を取る", "Phase3: 再現性を上げる"],
   salesSimulation: emptySalesSimulation,
   dontDo: ["ロゴ調整", "長期開発", "販売前の作り込み"],
-  todayMission: ["競合価格を3件確認", "提案価格を修正", "3件へ送信"],
-  atlasComment: "完成度より販売接触を優先。今回は売れるかどうかを最優先に変更しました。",
-  atlasOneLine: "価格改善を採用。短時間で売上に近い検証から開始。",
-  nextStep: "45分で価格を修正し、3件へ送信する。",
+  todayMission: [
+    {
+      title: "競合価格を3件確認",
+      action: "同じ悩みを解決している競合を3件探し、価格と提供内容を1行ずつ記録する",
+      deliverable: "競合価格メモ3行",
+      doneCriteria: "競合名、価格、提供内容が3件分そろっている",
+      timeEstimate: "20分",
+    },
+    {
+      title: "提案価格を修正",
+      action: "競合価格メモを見て、今日送る提案価格を1つ決める",
+      deliverable: "提案価格1つ",
+      doneCriteria: "送信文に入れる価格が1つ決まっている",
+      timeEstimate: "10分",
+    },
+    {
+      title: "3件へ送信",
+      action: "見込み客3人に短い提案文を送る",
+      deliverable: "送信済み提案3件",
+      doneCriteria: "3人に送信し、送信先と送信時刻を記録している",
+      timeEstimate: "30分",
+    },
+  ],
+  atlasComment: "完成度より販売接触を優先。売れるかどうかを最優先に変更しました。",
+  atlasOneLine: "制約内で勝率が高い接触から開始。",
+  nextStep: "今日60分で候補10件を抽出し、3件へ提案を送信する。",
 };
 
 function buildSafeFallbackResult(
@@ -137,12 +166,12 @@ function normalizeResult(
   try {
     const parsed = JSON.parse(cleaned) as Partial<AtlasResult> & {
       salesSimulation?: Partial<AtlasResult["salesSimulation"]>;
-      todayMission?: string | string[];
+      todayMission?: string | string[] | Partial<MissionDraft>[];
       dontDo?: string | string[];
       decisionLog?: string | string[];
     };
     const decisionLog = normalizeStringArray(parsed.decisionLog, fallbackDecisionLog);
-    const todayMission = normalizeStringArray(parsed.todayMission, defaultResult.todayMission);
+    const todayMission = normalizeMissionArray(parsed.todayMission, defaultResult.todayMission);
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
 
     return {
@@ -195,6 +224,46 @@ function normalizeStringArray(value: unknown, fallback: string[]) {
   return fallback;
 }
 
+function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item): MissionDraft | null => {
+        if (typeof item === "string" && item.trim()) {
+          return { title: item.trim() };
+        }
+
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+
+        const mission = item as Partial<MissionDraft>;
+        const title = mission.title?.trim();
+
+        if (!title) {
+          return null;
+        }
+
+        return {
+          title,
+          action: mission.action?.trim() || undefined,
+          deliverable: mission.deliverable?.trim() || undefined,
+          doneCriteria: mission.doneCriteria?.trim() || undefined,
+          timeEstimate: mission.timeEstimate?.trim() || undefined,
+          example: mission.example?.trim() || undefined,
+        };
+      })
+      .filter((item): item is MissionDraft => Boolean(item));
+
+    return items.length > 0 ? items : fallback;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return [{ title: value.trim() }];
+  }
+
+  return fallback;
+}
+
 function buildDecisionLog(
   interviewAnswers: InterviewAnswerInput[] = [],
   atlasProfile?: AtlasProfileInput,
@@ -213,19 +282,19 @@ function buildDecisionLog(
   }
 
   if (time) {
-    logs.push(`実行時間は${time}を前提に設計`);
+    logs.push(`稼働時間は${time}を前提に設計`);
   }
 
   if (salesBlocker) {
-    logs.push(`${salesBlocker}の負荷を抑える`);
+    logs.push(`${salesBlocker}の壁を先に解消する`);
   }
 
   if (aiExperience) {
-    logs.push(`AI経験: ${aiExperience}`);
+    logs.push(`AI活用経験: ${aiExperience}`);
   }
 
   if (continuity) {
-    logs.push(`継続力: ${continuity}`);
+    logs.push(`継続条件: ${continuity}`);
   }
 
   if (cost) {
@@ -246,11 +315,11 @@ function buildAtlasComment(
   const answers = interviewAnswers.map((entry) => entry.answer);
 
   if (atlasProfile?.profileType) {
-    return `${atlasProfile.profileType} Profileを確認。強みを使い、弱点を避ける形で本日の最適行動を生成しました。`;
+    return `${atlasProfile.profileType} Profileを前提に、強みを使い、弱点を避ける形で本日の優先順位を作成しました。`;
   }
 
   if (answers.length > 0) {
-    return "入力受信。面談回答から勝率の高い行動を優先しました。";
+    return "入力内容と制約を踏まえ、売上に近い行動を優先して本日の優先順位を作成しました。";
   }
 
   return defaultResult.atlasComment;
@@ -263,39 +332,60 @@ function buildPrompt(payload: GeneratePayload) {
   const missions = payload.missions ?? [];
   const conversationHistory = payload.conversationHistory ?? [];
   const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean).join("\n");
+  const exampleFormatting = [
+    "Example Formatting:",
+    "- Return example as plain text only.",
+    "- Do not use Markdown markers such as **, __, #, -, or ` for styling.",
+    "- Keep line breaks in the example body.",
+    '- Write labels like "件名：" and "挨拶：" as normal text, not Markdown.',
+  ].join("\n");
 
-  return `
-あなたはAtlas。チャットAIではなく、90日以内の初収益を目的にしたRevenue Operating System。
-ユーザーに長文入力を求めず、面談回答とProfileから仮説を立て、理由、戦略、行動の順に返す。
+  return `${exampleFormatting}
 
+あなたはAtlas。ユーザーの制約を踏まえて、今日そのまま着手できるMissionを返します。
 出力はJSONのみ。Markdownは禁止。
 
-必須JSON:
+JSON:
 {
   "verdict": "GO or HOLD or STOP",
   "conclusion": "短い結論",
   "reasons": ["理由1", "理由2", "理由3"],
-  "decisionLog": ["判断理由1", "判断理由2", "判断理由3", "判断理由4", "判断理由5"],
-  "todayPlan": ["09:00〜09:20 行動", "09:20〜09:40 行動", "09:40〜10:00 行動"],
-  "sevenDayPlan": ["Day1: 行動", "Day2: 行動", "Day3: 行動", "Day4: 行動", "Day5: 行動", "Day6: 行動", "Day7: 行動"],
+  "decisionLog": ["判断材料1", "判断材料2", "判断材料3", "判断材料4", "判断材料5"],
+  "todayPlan": ["09:00-09:20 行動", "09:20-09:40 行動", "09:40-10:00 行動"],
+  "sevenDayPlan": ["Day1: 行動", "Day2: 行動", "Day3: 行動"],
   "ninetyDayPlan": ["Phase1: 行動", "Phase2: 行動", "Phase3: 行動"],
   "salesSimulation": { "price": "販売価格", "requiredSales": "必要販売数", "targetProfit": "利益" },
   "dontDo": ["やらないこと1", "やらないこと2", "やらないこと3"],
-  "todayMission": ["60分以内の行動1", "60分以内の行動2", "60分以内の行動3"],
+  "todayMission": [
+    {
+      "title": "動詞 + 成果物を含むMission名",
+      "action": "何をするかを具体的に書く",
+      "deliverable": "何を作るかを書く",
+      "doneCriteria": "どこまでやれば完了かを書く",
+      "timeEstimate": "何分でやるかを書く",
+      "example": "成果物そのものだけを書く。改行を含め、そのままコピーして少し書き換えれば使える本文にする"
+    }
+  ],
   "atlasComment": "今回なぜ優先順位を変更したか",
   "atlasOneLine": "短い一言",
   "nextStep": "次の一手"
 }
 
 判断ルール:
-- 90日以内を優先
-- 完成度より販売検証を優先
-- 長期開発、ロゴ調整、販売前の作り込みは却下
-- 今日のMissionは60分以内
-- decisionLogはProfileと面談回答から判断した事実を書く
-- 禁止語: いいですね、頑張りましょう、いかがでしょうか、一般的には、かもしれません
+- todayMissionは可能な限りオブジェクト配列で返す
+- 各Missionは title, action, deliverable, doneCriteria, timeEstimate を持つ
+- Missionは「動詞 + 成果物 + 完了条件」が分かる内容にする
+- actionは最初に何をするかが分かる実行指示にする
+- deliverableは完成物そのものを書く
+- doneCriteriaは数や状態で判定できる完了条件にする
+- timeEstimateは「20分」「45分」のように短く書く
+- exampleは成果物そのものだけを書く。説明文やメタ文は入れない
+- exampleは改行を含めてよく、そのままコピーして自分用に少し書き換えれば使える形にする
+- exampleを自然に作れないMissionではexampleを省略してよい
+- ユーザーが提供していない実績、顧客名、導入事例、売上実績を捏造しない
+- 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
 
-面談回答:
+Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
 
 Atlas Profile:
@@ -304,9 +394,9 @@ Accuracy: ${atlasProfile.accuracy}%
 Strength: ${atlasProfile.strength.join(" / ")}
 Weakness: ${atlasProfile.weakness.join(" / ")}
 Recommended Strategy: ${atlasProfile.recommendedStrategy.join(" / ")}
-Updated At: ${atlasProfile.updatedAt}` : "未生成"}
+Updated At: ${atlasProfile.updatedAt}` : "未登録"}
 
-ユーザー入力:
+Summary:
 ${summary || "未登録"}
 
 Memory:
@@ -317,7 +407,7 @@ Level: ${payload.memory.level}
 Last Conversation: ${payload.memory.lastConversation}` : "未登録"}
 
 Mission:
-${missions.length > 0 ? missions.map((mission) => `${mission.label}: ${mission.done ? "完了" : "未完了"}`).join(" / ") : "未登録"}
+${missions.length > 0 ? missions.map((mission) => `${mission.title ?? mission.label ?? "Mission"}: ${mission.done ? "完了" : "未完了"}`).join(" / ") : "未登録"}
 
 Mission History:
 ${missionHistory.length > 0 ? missionHistory.slice(0, 8).map((entry) => `${entry.date} / ${entry.mission} / ${entry.status}`).join("\n") : "未登録"}

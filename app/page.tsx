@@ -49,6 +49,17 @@ type Screen =
   | "result"
   | "mission";
 
+type AtlasMissionDraft =
+  | string
+  | {
+      title?: string;
+      action?: string;
+      deliverable?: string;
+      doneCriteria?: string;
+      timeEstimate?: string;
+      example?: string;
+    };
+
 type AtlasResult = {
   verdict: "GO" | "HOLD" | "STOP";
   conclusion: string;
@@ -67,6 +78,10 @@ type AtlasResult = {
   atlasComment: string;
   atlasOneLine: string;
   nextStep: string;
+};
+
+type AtlasApiResult = Omit<AtlasResult, "todayMission"> & {
+  todayMission: AtlasMissionDraft[];
 };
 
 type AtlasMemory = {
@@ -92,8 +107,14 @@ type ConversationEntry = {
 
 type MissionItem = {
   id: string;
-  label: string;
+  title?: string;
+  label?: string;
   done: boolean;
+  action?: string;
+  deliverable?: string;
+  doneCriteria?: string;
+  timeEstimate?: string;
+  example?: string;
 };
 
 type LegacyProfile = {
@@ -137,6 +158,54 @@ const ghostMessages = [
 ];
 
 const firstRunStorageKey = "atlas-first-run-started";
+
+function getMissionTitle(mission: Pick<MissionItem, "title" | "label">) {
+  return mission.title?.trim() || mission.label?.trim() || "Mission";
+}
+
+function formatMissionExample(example?: string) {
+  if (!example) {
+    return "";
+  }
+
+  return example
+    .replace(/\r\n/g, "\n")
+    .replace(/^\s*[-*#]\s+/gm, "")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/(^|[\s(])([*_`]+)([^*_`\n].*?)(\2)(?=[\s).,!?]|$)/g, "$1$3")
+    .replace(/[`]/g, "")
+    .trim();
+}
+
+function toMissionItem(source: AtlasMissionDraft, index: number): MissionItem | null {
+  if (typeof source === "string") {
+    const normalizedTitle = source.trim();
+    return normalizedTitle
+      ? {
+          id: `${normalizedTitle}-${index}`,
+          title: normalizedTitle,
+          done: false,
+        }
+      : null;
+  }
+
+  const title = source.title?.trim();
+
+  if (!title) {
+    return null;
+  }
+
+  return {
+    id: `${title}-${index}`,
+    title,
+    done: false,
+    action: source.action?.trim() || undefined,
+    deliverable: source.deliverable?.trim() || undefined,
+    doneCriteria: source.doneCriteria?.trim() || undefined,
+    timeEstimate: source.timeEstimate?.trim() || undefined,
+    example: formatMissionExample(source.example) || undefined,
+  };
+}
 
 function readStoredValue<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") {
@@ -286,7 +355,7 @@ export default function HomePage() {
   }, [completedMissionCount, missions.length]);
   const lastCompletedMission = useMemo(() => {
     const completed = missions.filter((mission) => mission.done);
-    return completed.at(-1)?.label ?? "";
+    return completed.at(-1) ? getMissionTitle(completed.at(-1)!) : "";
   }, [missions]);
   const strategy = useMemo(() => resolveStrategy(progressPercent), [progressPercent]);
   const founderTimeline = useMemo(
@@ -298,10 +367,13 @@ export default function HomePage() {
     setScreen(atlasProfile ? "brief" : "welcome");
   };
 
-  const updateMemory = (nextResult: AtlasResult) => {
+  const updateMemory = (nextResult: AtlasApiResult | AtlasResult) => {
+    const firstMission = nextResult.todayMission[0];
+    const nextMissionTitle = typeof firstMission === "string" ? firstMission : firstMission?.title;
+
     setMemory((previous) => ({
       goal: nextResult.conclusion || previous.goal,
-      todayMission: nextResult.todayMission[0] || previous.todayMission,
+      todayMission: nextMissionTitle || previous.todayMission,
       trust: Math.min(previous.trust + 1, 5),
       level: Math.min(previous.level + 1, 5),
       lastConversation: nextResult.conclusion || previous.lastConversation,
@@ -513,16 +585,23 @@ export default function HomePage() {
       }
 
       const data = await response.json();
-      const nextResult = data.result as AtlasResult;
-      const missionLabels = Array.isArray(nextResult.todayMission) && nextResult.todayMission.length > 0
+      const nextResult = data.result as AtlasApiResult;
+      const missionSources = Array.isArray(nextResult.todayMission) && nextResult.todayMission.length > 0
         ? nextResult.todayMission
         : nextResult.todayPlan
             .map((item) => item.replace(/^\d{2}:\d{2}〜\d{2}:\d{2}\s*/, "").trim())
             .filter(Boolean);
-      const extractedMissions = missionLabels.slice(0, 6).map((label, index) => ({ id: `${label}-${index}`, label, done: false }));
+      const extractedMissions = missionSources
+        .slice(0, 6)
+        .map((mission, index) => toMissionItem(mission, index))
+        .filter((mission): mission is MissionItem => Boolean(mission));
+      const normalizedResult = {
+        ...nextResult,
+        todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
+      };
 
       setMissions(extractedMissions);
-      setResult(nextResult);
+      setResult(normalizedResult);
       updateMemory(nextResult);
       updateGhostCounter();
       setLoadingComplete(true);
@@ -566,7 +645,7 @@ export default function HomePage() {
         setMissionHistory((history) => [
           {
             date: new Date().toLocaleDateString("ja-JP"),
-            mission: targetMission.label,
+            mission: getMissionTitle(targetMission),
             status: nextValue ? ("完了" as const) : ("未完了" as const),
             note: nextValue ? "達成を記録" : "未完了に更新",
           },
@@ -1088,7 +1167,7 @@ function DashboardScreen({
                   }`}
                 >
                   <Icon className="h-4 w-4" />
-                  {item.label}
+                  <span className="whitespace-nowrap">{item.label}</span>
                 </button>
               );
             })}
@@ -1158,7 +1237,7 @@ function DashboardScreen({
                   <span className="flex h-6 w-6 items-center justify-center rounded-[8px] border border-indigo-100 bg-indigo-50 text-indigo-600 transition duration-200 group-hover:scale-110">
                     {mission.done && <CheckCircle2 className="h-4 w-4" />}
                   </span>
-                  <span className="min-w-0 truncate text-sm font-black text-slate-900">{mission.label}</span>
+                  <span className="min-w-0 truncate text-sm font-black text-slate-900">{getMissionTitle(mission)}</span>
                   <span className={`rounded-full px-2 py-1 text-center text-xs font-black ${
                     index === 0 ? "bg-[#5FA8A0]/12 text-[#25736C]" : index === 1 ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-600"
                   }`}>
@@ -1300,6 +1379,26 @@ function MissionPanel({
   showNextStep?: boolean;
 }) {
   const missionTotal = Math.max(missions.length, 1);
+  const [openExampleId, setOpenExampleId] = useState<string | null>(null);
+  const [copiedExampleId, setCopiedExampleId] = useState<string | null>(null);
+
+  const handleCopyExample = async (mission: MissionItem) => {
+    const exampleText = formatMissionExample(mission.example);
+
+    if (!exampleText) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(exampleText);
+      setCopiedExampleId(mission.id);
+      window.setTimeout(() => {
+        setCopiedExampleId((current) => (current === mission.id ? null : current));
+      }, 2200);
+    } catch {
+      setCopiedExampleId((current) => (current === mission.id ? null : current));
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -1327,34 +1426,107 @@ function MissionPanel({
         ) : (
           <div className="mt-6 grid gap-3">
             {missions.map((mission, index) => (
-              <button
+              <article
                 key={mission.id}
-                type="button"
-                aria-pressed={mission.done}
-                onClick={() => onToggleMission(mission.id)}
-                className={`group grid min-h-16 grid-cols-[32px_minmax(0,1fr)_72px] items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 ${
+                className={`rounded-[20px] border px-4 py-4 transition duration-200 ${
                   mission.done
-                    ? "border-emerald-200 bg-emerald-50 text-slate-950 shadow-[0_10px_26px_rgba(34,197,94,0.08)]"
-                    : "border-slate-200 bg-white text-slate-950 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/60 hover:shadow-[0_12px_28px_rgba(79,70,229,0.08)]"
+                    ? "border-emerald-200 bg-emerald-50/80 text-slate-950 shadow-[0_10px_26px_rgba(34,197,94,0.08)]"
+                    : "border-slate-200 bg-white text-slate-950 shadow-[0_12px_28px_rgba(79,70,229,0.05)]"
                 }`}
               >
-                <span className={`flex h-8 w-8 items-center justify-center rounded-[10px] border transition duration-200 ${
-                  mission.done ? "border-emerald-300 bg-emerald-500 text-white scale-105" : "border-slate-200 bg-white text-slate-300 group-hover:border-indigo-300 group-hover:text-indigo-500"
-                }`}>
-                  {mission.done ? <CheckCircle2 className="h-5 w-5" /> : index + 1}
-                </span>
-                <span>
-                  <span className="block text-sm font-black leading-6">{mission.label}</span>
-                  <span className="mt-1 block text-xs font-bold text-slate-400">
-                    {mission.done ? "処理済み。履歴に記録。" : `${index + 1}/${missionTotal} / 本日の最適行動`}
+                <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_72px] sm:items-start">
+                  <button
+                    type="button"
+                    aria-pressed={mission.done}
+                    onClick={() => onToggleMission(mission.id)}
+                    className={`group grid min-h-16 grid-cols-[32px_minmax(0,1fr)] items-start gap-3 text-left transition duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 ${
+                      mission.done ? "" : "hover:-translate-y-0.5"
+                    }`}
+                  >
+                    <span className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-[10px] border transition duration-200 ${
+                      mission.done ? "border-emerald-300 bg-emerald-500 text-white scale-105" : "border-slate-200 bg-white text-slate-300 group-hover:border-indigo-300 group-hover:text-indigo-500"
+                    }`}>
+                      {mission.done ? <CheckCircle2 className="h-5 w-5" /> : index + 1}
+                    </span>
+                    <span>
+                      <span className="block text-sm font-black leading-6">{getMissionTitle(mission)}</span>
+                      <span className="mt-1 block text-xs font-bold text-slate-400">
+                        {mission.done ? "処理済み。履歴に記録。" : `${index + 1}/${missionTotal} / 本日の最適行動`}
+                      </span>
+                    </span>
+                  </button>
+
+                  <span className={`justify-self-start rounded-full px-2 py-1 text-center text-xs font-black sm:justify-self-end ${
+                    index === 0 ? "bg-[#5FA8A0]/12 text-[#25736C]" : index === 1 ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-600"
+                  }`}>
+                    P{index + 1}
                   </span>
-                </span>
-                <span className={`rounded-full px-2 py-1 text-center text-xs font-black ${
-                  index === 0 ? "bg-[#5FA8A0]/12 text-[#25736C]" : index === 1 ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-600"
-                }`}>
-                  P{index + 1}
-                </span>
-              </button>
+                </div>
+
+                {(mission.action || mission.deliverable || mission.doneCriteria || mission.timeEstimate) && (
+                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {mission.action && (
+                      <div className="rounded-[16px] bg-slate-50 px-4 py-3">
+                        <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">何をするか</dt>
+                        <dd className="mt-2 text-sm font-bold leading-6 text-slate-900">{mission.action}</dd>
+                      </div>
+                    )}
+                    {mission.deliverable && (
+                      <div className="rounded-[16px] bg-slate-50 px-4 py-3">
+                        <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">何を作るか</dt>
+                        <dd className="mt-2 text-sm font-bold leading-6 text-slate-900">{mission.deliverable}</dd>
+                      </div>
+                    )}
+                    {mission.doneCriteria && (
+                      <div className="rounded-[16px] bg-slate-50 px-4 py-3">
+                        <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">どこまでやれば完了か</dt>
+                        <dd className="mt-2 text-sm font-bold leading-6 text-slate-900">{mission.doneCriteria}</dd>
+                      </div>
+                    )}
+                    {mission.timeEstimate && (
+                      <div className="rounded-[16px] bg-slate-50 px-4 py-3">
+                        <dt className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">何分でやるか</dt>
+                        <dd className="mt-2 text-sm font-bold leading-6 text-slate-900">{mission.timeEstimate}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+
+                {formatMissionExample(mission.example) && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setOpenExampleId((current) => (current === mission.id ? null : mission.id))}
+                      className="inline-flex min-h-11 items-center justify-center rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                    >
+                      {openExampleId === mission.id ? "完成サンプルを閉じる" : "完成サンプルを見る"}
+                    </button>
+
+                    {openExampleId === mission.id && (
+                      <div className="mt-3 rounded-[18px] border border-indigo-100 bg-indigo-50/40 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-black text-slate-950">完成サンプル（例）</p>
+                            <p className="mt-1 text-sm font-bold leading-6 text-slate-500">
+                              コピーして、自分用に書き換えて使えます。
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyExample(mission)}
+                            className="inline-flex min-h-10 items-center justify-center rounded-[12px] border border-indigo-200 bg-white px-3 text-sm font-black text-indigo-700 transition duration-200 hover:bg-indigo-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                          >
+                            {copiedExampleId === mission.id ? "✓ コピーしました" : "サンプルをコピー"}
+                          </button>
+                        </div>
+                        <div className="mt-4 rounded-[16px] bg-white px-4 py-4 text-sm font-bold leading-7 text-slate-800 shadow-[0_8px_24px_rgba(79,70,229,0.05)] whitespace-pre-wrap break-words select-text">
+                          {formatMissionExample(mission.example)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </article>
             ))}
           </div>
         )}
