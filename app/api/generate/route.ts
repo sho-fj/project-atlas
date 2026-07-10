@@ -310,12 +310,11 @@ function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "d
   const title = mission.title.trim();
   const action = mission.action?.trim();
   const deliverable = mission.deliverable?.trim();
-  const doneCriteria = mission.doneCriteria?.trim();
   const lower = `${title} ${action ?? ""} ${deliverable ?? ""}`.toLowerCase();
 
   if (/価格|競合/.test(lower)) {
     return stripMarkdown(
-      "競合A 30000円 週1回相談\n競合B 50000円 チャット相談付き\n競合C 20000円 単発アドバイス",
+      "10,000円: 初回相談\n30,000円: 個別サポート\n50,000円: 継続サポート",
     );
   }
 
@@ -325,28 +324,23 @@ function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "d
     );
   }
 
-  if (/困りごと|悩み|書き出/.test(lower)) {
-    return stripMarkdown("1. 毎日の作業が手間\n2. 情報整理に時間がかかる\n3. 続け方が分からない");
+  if (/質問/.test(lower)) {
+    return stripMarkdown("今、最も時間がかかっていることは何ですか？\nそれを変えるために試したことはありますか？\n改善できたら何が一番楽になりますか？");
   }
 
-  if (/頼まれたこと|振り返/.test(lower)) {
-    return stripMarkdown("1. 資料を見やすく整える\n2. 手順を分かりやすく説明する\n3. 作業の進め方を整理する");
+  if (/困りごと|悩み/.test(lower)) {
+    return stripMarkdown("時間がかかること\n繰り返し発生すること\nお金を払ってでも減らしたいこと");
   }
 
-  if (/変えたいこと|選ぶ/.test(lower)) {
-    return stripMarkdown("1. 収入源を増やしたい\n2. 時間の使い方を改善したい\n3. 将来の選択肢を増やしたい");
+  if (/対象者|顧客/.test(lower)) {
+    return stripMarkdown("同じ状況にいる人\n時間を節約したい人\n初めて取り組む人");
   }
 
-  return stripMarkdown(
-    [
-      title,
-      action ? `やること: ${action}` : "",
-      deliverable ? `完成物: ${deliverable}` : "",
-      doneCriteria ? `完了条件: ${doneCriteria}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
+  if (/経験|興味|頼まれたこと|振り返|強み|候補|整理/.test(lower)) {
+    return stripMarkdown("これまでの仕事\n人によく頼まれること\n長く続けている趣味");
+  }
+
+  return stripMarkdown("候補A\n候補B\n候補C");
 }
 
 function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
@@ -1158,6 +1152,12 @@ JSON:
 - exampleはそのMissionで実際に作る成果物の完成例にする
 - exampleはtitle, action, deliverable, doneCriteriaに具体的に対応させる
 - exampleはそのままコピーして書き換えられる本文にする
+- 最重要: exampleはdeliverableと同じ形式で返す。成果物が候補3項目なら、exampleもそのまま入力できる短い候補3項目にする
+- 単語・候補リストの成果物には、単語または短い語句だけを並べる。質問項目や説明文にしない
+- 短文リストの成果物には短文だけを並べる。質問リストの成果物には実際に使う質問文を並べる
+- 営業文の成果物には完成した営業文を返す。価格案の成果物には実際の価格案を返す
+- 経験、興味、強み候補、困りごと候補、対象者候補を整理するMissionでは、短い語句で十分なら文章にしない
+- ユーザー情報が不足している候補整理Missionでは、特定人物を想定せず「これまでの仕事」「人によく頼まれること」「長く続けている趣味」のような中立的な候補形式を使う
 - ユーザーが提供していない実績、顧客名、導入事例、売上実績を捏造しない
 - 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
 

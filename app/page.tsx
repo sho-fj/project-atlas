@@ -120,6 +120,16 @@ type MissionItem = {
   example?: string;
 };
 
+type UserArtifact = {
+  id: string;
+  type: "mission_artifact";
+  source: "user";
+  missionTitle: string;
+  missionAction: string;
+  content: string;
+  sharedAt: string;
+};
+
 type MissionOutcome = "できた" | "反応待ち" | "うまくいかなかった" | "別の発見があった";
 
 type MissionContinuationResult =
@@ -241,6 +251,10 @@ function formatMissionExample(example?: string) {
     .replace(/(^|[\s(])([*_`]+)([^*_`\n].*?)(\2)(?=[\s).,!?]|$)/g, "$1$3")
     .replace(/[`]/g, "")
     .trim();
+}
+
+function normalizeArtifactComparisonText(value: string) {
+  return value.replace(/\s/g, "");
 }
 
 function toMissionItem(source: AtlasMissionDraft, index: number): MissionItem | null {
@@ -1706,6 +1720,9 @@ function MissionPanel({
   const allMissionsDone = missions.length > 0 && missions.every((mission) => mission.done);
   const [openExampleId, setOpenExampleId] = useState<string | null>(null);
   const [copiedExampleId, setCopiedExampleId] = useState<string | null>(null);
+  const [editingExampleId, setEditingExampleId] = useState<string | null>(null);
+  const [artifactDraft, setArtifactDraft] = useState("");
+  const [artifactMessage, setArtifactMessage] = useState<{ type: "success" | "error"; text: string; missionId: string } | null>(null);
   const [isContinuationOpen, setIsContinuationOpen] = useState(false);
   const [selectedOutcome, setSelectedOutcome] = useState<MissionOutcome | null>(null);
   const [isContinuingMission, setIsContinuingMission] = useState(false);
@@ -1735,6 +1752,52 @@ function MissionPanel({
       }, 2200);
     } catch {
       setCopiedExampleId((current) => (current === mission.id ? null : current));
+    }
+  };
+
+  const handleStartArtifactEdit = (mission: MissionItem) => {
+    const exampleText = formatMissionExample(mission.example);
+    if (!exampleText) {
+      return;
+    }
+
+    setEditingExampleId(mission.id);
+    setArtifactDraft(exampleText);
+    setArtifactMessage(null);
+  };
+
+  const handleCancelArtifactEdit = () => {
+    setEditingExampleId(null);
+    setArtifactDraft("");
+  };
+
+  const handleShareArtifact = (mission: MissionItem) => {
+    const originalExample = formatMissionExample(mission.example);
+    const nextContent = artifactDraft.trim();
+    const normalizedOriginalExample = normalizeArtifactComparisonText(originalExample);
+    const normalizedNextContent = normalizeArtifactComparisonText(nextContent);
+
+    if (!normalizedNextContent || normalizedNextContent === normalizedOriginalExample) {
+      return;
+    }
+
+    try {
+      const storedArtifacts = readStoredValue<UserArtifact[]>("atlas-user-artifacts", []);
+      const nextArtifact: UserArtifact = {
+        id: crypto.randomUUID(),
+        type: "mission_artifact",
+        source: "user",
+        missionTitle: getMissionTitle(mission),
+        missionAction: mission.action?.trim() || "",
+        content: nextContent,
+        sharedAt: new Date().toISOString(),
+      };
+      window.localStorage.setItem("atlas-user-artifacts", JSON.stringify([...storedArtifacts, nextArtifact]));
+      setArtifactMessage({ type: "success", text: "Atlasと共有しました", missionId: mission.id });
+      setEditingExampleId(null);
+      setArtifactDraft("");
+    } catch {
+      setArtifactMessage({ type: "error", text: "保存できませんでした", missionId: mission.id });
     }
   };
 
@@ -1846,6 +1909,11 @@ function MissionPanel({
 
                 {formatMissionExample(mission.example) && (
                   <div className="mt-4">
+                    {artifactMessage?.missionId === mission.id && (
+                      <p className={`mb-3 text-sm font-black ${artifactMessage.type === "success" ? "text-emerald-600" : "text-rose-600"}`}>
+                        {artifactMessage.text}
+                      </p>
+                    )}
                     <button
                       type="button"
                       onClick={() => setOpenExampleId((current) => (current === mission.id ? null : mission.id))}
@@ -1874,6 +1942,47 @@ function MissionPanel({
                         <div className="mt-4 rounded-[16px] bg-white px-4 py-4 text-sm font-bold leading-7 text-slate-800 shadow-[0_8px_24px_rgba(79,70,229,0.05)] whitespace-pre-wrap break-words select-text">
                           {formatMissionExample(mission.example)}
                         </div>
+                        <div className="mt-4">
+                          <button
+                            type="button"
+                            onClick={() => handleStartArtifactEdit(mission)}
+                            className="inline-flex min-h-10 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                          >
+                            自分用に書き換える
+                          </button>
+                        </div>
+                        {editingExampleId === mission.id && (
+                          <div className="mt-4 rounded-[16px] border border-slate-200 bg-white p-4">
+                            <p className="text-sm font-black text-slate-950">自分用に書き換える</p>
+                            <textarea
+                              value={artifactDraft}
+                              onChange={(event) => setArtifactDraft(event.target.value)}
+                              rows={8}
+                              className="mt-3 w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold leading-7 text-slate-900 outline-none transition duration-200 focus:border-indigo-300 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+                            />
+                            <div className="mt-4 flex flex-wrap gap-3">
+                              <button
+                                type="button"
+                                onClick={() => handleShareArtifact(mission)}
+                                disabled={
+                                  !normalizeArtifactComparisonText(artifactDraft.trim()) ||
+                                  normalizeArtifactComparisonText(artifactDraft.trim()) ===
+                                    normalizeArtifactComparisonText(formatMissionExample(mission.example))
+                                }
+                                className="inline-flex min-h-10 items-center justify-center rounded-[12px] bg-slate-950 px-4 text-sm font-black text-white transition duration-200 hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-300"
+                              >
+                                Atlasと共有
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelArtifactEdit}
+                                className="inline-flex min-h-10 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                              >
+                                キャンセル
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
