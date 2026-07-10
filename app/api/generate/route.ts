@@ -49,6 +49,16 @@ type ReadinessNeed = {
   question: string;
 };
 
+type CurrentStage =
+  | "exploring"
+  | "defining"
+  | "validating"
+  | "selling"
+  | "repeating"
+  | "optimizing"
+  | "scaling"
+  | "unknown";
+
 const followUpQuestionConfig = {
   goal: {
     question: "何を目指していますか？",
@@ -207,6 +217,7 @@ function buildSafeFallbackResult(
 function normalizeResult(
   text: string,
   payload: GeneratePayload,
+  currentStage: CurrentStage,
   interviewAnswers: InterviewAnswerInput[] = [],
   atlasProfile?: AtlasProfileInput,
 ): AtlasResult {
@@ -248,14 +259,14 @@ function normalizeResult(
       needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
       followUpQuestions,
     };
-    return applyHardReadinessGate(payload, normalized);
+    return applyStageFitGate(payload, applyHardReadinessGate(payload, normalized), currentStage);
   } catch {
-    return applyHardReadinessGate(payload, {
+    return applyStageFitGate(payload, applyHardReadinessGate(payload, {
       ...defaultResult,
       salesSimulation: emptySalesSimulation,
       decisionLog: fallbackDecisionLog,
       atlasComment: fallbackAtlasComment,
-    });
+    }), currentStage);
   }
 }
 
@@ -449,6 +460,53 @@ function collectUserEvidence(payload: GeneratePayload) {
   };
 }
 
+function deriveCurrentStage(payload: GeneratePayload): CurrentStage {
+  const evidence = collectUserEvidence(payload);
+  const userFacts = [
+    evidence.goal,
+    evidence.customerProblem,
+    evidence.offerOrStrength,
+    evidence.availableTime,
+    evidence.availableBudget,
+    ...evidence.answerValues,
+    ...evidence.missionResultValues,
+  ]
+    .filter(hasSubstance)
+    .join(" ")
+    .toLowerCase();
+  const completedCount = (payload.missionHistory ?? []).filter((entry) => entry.status === "完了").length;
+
+  if (/拡大した|採用した|チームを増やした|広告を拡大|スケールしている/.test(userFacts)) {
+    return "scaling";
+  }
+
+  if (/改善している|効率化している|利益率を上げたい|最適化している/.test(userFacts)) {
+    return "optimizing";
+  }
+
+  if (completedCount >= 2 && /販売できた|受注できた|継続できた|繰り返している|再現/.test(userFacts)) {
+    return "repeating";
+  }
+
+  if (/提案を送った|営業した|販売した|受注した|売れた/.test(userFacts)) {
+    return "selling";
+  }
+
+  if (/ヒアリングした|反応を見た|テストした|検証した|試した/.test(userFacts)) {
+    return "validating";
+  }
+
+  if (hasSubstance(evidence.customerProblem) || hasSubstance(evidence.offerOrStrength)) {
+    return "defining";
+  }
+
+  if (hasSubstance(evidence.goal) || hasSubstance(evidence.availableTime) || evidence.answerValues.length > 0) {
+    return "exploring";
+  }
+
+  return "unknown";
+}
+
 function containsConcreteOfferOrStrength(values: string[]) {
   return values.some((value) => {
     const normalized = value.trim();
@@ -526,6 +584,104 @@ function buildDiscoveryMission(unresolvedNeeds: ReadinessNeed["key"][]): Mission
 
   const first = unresolvedNeeds.find((need) => missionMap[need]);
   return first && missionMap[first] ? [missionMap[first] as MissionDraft] : [];
+}
+
+function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): MissionDraft[] {
+  const strengths = payload.followUpAnswers?.map((entry) => entry.answer).find(hasSubstance)
+    || payload.interviewAnswers?.map((entry) => entry.answer).find(hasSubstance)
+    || "自分の経験";
+
+  const safeMissionMap: Record<Exclude<CurrentStage, "unknown" | "optimizing" | "scaling">, MissionDraft> = {
+    exploring: {
+      title: "自分の経験と興味を3つ整理する",
+      action: `これまでの経験や気になる分野から、使えそうなものを3つ書き出す`,
+      deliverable: "経験と興味の候補3項目",
+      doneCriteria: "3項目が短文で整理されている",
+      timeEstimate: "10分",
+      example: `1. ${strengths}\n2. 人から頼まれたこと\n3. 気になっている分野`,
+    },
+    defining: {
+      title: "対象者と悩みを1組に絞る",
+      action: "助けたい相手を1人のイメージで決め、その人の悩みを1つ書く",
+      deliverable: "対象者1人と悩み1つ",
+      doneCriteria: "誰のどんな悩みかが1文で書けている",
+      timeEstimate: "10分",
+      example: "対象者: 忙しくて発信が止まりがちな個人事業主\n悩み: 何を書けばいいか毎回止まる",
+    },
+    validating: {
+      title: "小さな確認メモを1本作る",
+      action: "相手の悩みと仮の価値提案を1本の短い確認文にまとめる",
+      deliverable: "確認メモ1本",
+      doneCriteria: "悩みと提案が3行以内でまとまっている",
+      timeEstimate: "15分",
+      example: "相手: 発信が止まりがちな個人事業主\n悩み: 毎回ネタ出しで止まる\n仮提案: 発信テーマを一緒に整理して1週間分の下書きを作る",
+    },
+    selling: {
+      title: "小さな提案文を1本作る",
+      action: "仮の価格と提供内容を入れた短い提案文を1本書く",
+      deliverable: "提案文1本",
+      doneCriteria: "誰向けに何をいくらで提案するかが入っている",
+      timeEstimate: "15分",
+      example: "○○で困っている方向けに、1週間分の発信テーマ整理を5000円でお手伝いします。必要なら現状を10分だけ伺います。",
+    },
+    repeating: {
+      title: "販売手順を3ステップで書く",
+      action: "受注までにやった流れを3ステップで整理する",
+      deliverable: "販売手順3ステップ",
+      doneCriteria: "同じ流れを次回も使える形で書けている",
+      timeEstimate: "15分",
+      example: "1. 相手の悩みを聞く\n2. 小さく提案する\n3. 実施後に次回提案へつなぐ",
+    },
+  };
+
+  if (stage === "optimizing" || stage === "scaling" || stage === "unknown") {
+    return [];
+  }
+
+  return [safeMissionMap[stage]];
+}
+
+function detectStageLeap(stage: CurrentStage, result: AtlasResult) {
+  const missionText = result.todayMission
+    .flatMap((mission) => [mission.title, mission.action, mission.deliverable, mission.doneCriteria])
+    .filter(Boolean)
+    .join(" ");
+
+  const rules: Record<Exclude<CurrentStage, "optimizing" | "scaling" | "unknown">, RegExp | null> = {
+    exploring: /営業|顧客|送信|価格|広告|開発|法人化|投資|拡大/,
+    defining: /広告|本格開発|開発|法人化|拡大|投資/,
+    validating: /拡大|採用|大規模広告|本格開発|投資/,
+    selling: /拡大|採用|大規模広告/,
+    repeating: null,
+  };
+
+  const rule = stage === "optimizing" || stage === "scaling" || stage === "unknown" ? null : rules[stage];
+  return rule ? rule.test(missionText) : false;
+}
+
+function applyStageFitGate(payload: GeneratePayload, result: AtlasResult, currentStage: CurrentStage) {
+  if (result.needsMoreInfo) {
+    return result;
+  }
+
+  if (currentStage === "unknown" || currentStage === "optimizing" || currentStage === "scaling") {
+    return result;
+  }
+
+  if (!detectStageLeap(currentStage, result)) {
+    return result;
+  }
+
+  const safeMission = buildStageSafeMission(currentStage, payload);
+
+  return {
+    ...result,
+    verdict: "HOLD" as const,
+    conclusion: `現在段階 ${currentStage} に合わせて、先に安全なMissionへ調整しました。`,
+    reasons: [`現在段階 ${currentStage} より先の行動が含まれていたため、段階に合うMissionへ置き換えました。`, ...result.reasons].slice(0, 5),
+    todayMission: safeMission.length > 0 ? safeMission : result.todayMission,
+    nextStep: safeMission[0]?.title ?? result.nextStep,
+  };
 }
 
 function applyHardReadinessGate(payload: GeneratePayload, result: AtlasResult) {
@@ -622,7 +778,7 @@ function buildAtlasComment(
   return defaultResult.atlasComment;
 }
 
-function buildCurrentStateMap(payload: GeneratePayload) {
+function buildCurrentStateMap(payload: GeneratePayload, currentStage: CurrentStage) {
   const interviewAnswers = payload.interviewAnswers ?? [];
   const followUpAnswers = payload.followUpAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
@@ -650,7 +806,7 @@ function buildCurrentStateMap(payload: GeneratePayload) {
     "",
     "Current State Map fields to fill:",
     `goal: ${memory?.goal?.trim() || payload.profile?.targetRevenue?.trim() || "unknown"}`,
-    "currentStage: choose from exploring, defining, validating, selling, repeating, optimizing, scaling, unknown based on evidence only",
+    `currentStage: ${currentStage}`,
     "decided: list only decisions already made and supported by evidence",
     "undecided: list what remains undecided based on conflicting, missing, or absent evidence",
     "constraints: summarize only explicit time, budget, job, environment, or capability constraints",
@@ -676,7 +832,7 @@ function buildCurrentStateMap(payload: GeneratePayload) {
   ].join("\n");
 }
 
-function buildPrompt(payload: GeneratePayload) {
+function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
   const interviewAnswers = payload.interviewAnswers ?? [];
   const followUpAnswers = payload.followUpAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
@@ -685,7 +841,7 @@ function buildPrompt(payload: GeneratePayload) {
   const conversationHistory = payload.conversationHistory ?? [];
   const missionContinuation = payload.missionContinuation;
   const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean).join("\n");
-  const currentStateMap = buildCurrentStateMap(payload);
+  const currentStateMap = buildCurrentStateMap(payload, currentStage);
   const exampleFormatting = [
     "Example Formatting:",
     "- Return example as plain text only.",
@@ -848,6 +1004,7 @@ export async function POST(req: Request) {
 
   const interviewAnswers = payload.interviewAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
+  const currentStage = deriveCurrentStage(payload);
 
   if (!process.env.GEMINI_API_KEY) {
     return Response.json({
@@ -865,11 +1022,11 @@ export async function POST(req: Request) {
     });
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: buildPrompt(payload),
+      contents: buildPrompt(payload, currentStage),
     });
 
     return Response.json({
-      result: normalizeResult(response.text ?? "", payload, interviewAnswers, atlasProfile),
+      result: normalizeResult(response.text ?? "", payload, currentStage, interviewAnswers, atlasProfile),
       meta: {
         source: "gemini",
       },
