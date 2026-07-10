@@ -29,6 +29,8 @@ type AtlasResult = {
   atlasComment: string;
   atlasOneLine: string;
   nextStep: string;
+  needsMoreInfo: boolean;
+  followUpQuestions: string[];
 };
 
 type InterviewAnswerInput = {
@@ -140,6 +142,8 @@ const defaultResult: AtlasResult = {
   atlasComment: "完成度より販売接触を優先。売れるかどうかを最優先に変更しました。",
   atlasOneLine: "制約内で勝率が高い接触から開始。",
   nextStep: "今日60分で候補10件を抽出し、3件へ提案を送信する。",
+  needsMoreInfo: false,
+  followUpQuestions: [],
 };
 
 function buildSafeFallbackResult(
@@ -161,6 +165,8 @@ function buildSafeFallbackResult(
     atlasComment: `API応答を取得できません。${reasonLabel[reason]}のため、保存済みProfileと安全なfallbackから暫定Missionを生成しました。`,
     atlasOneLine: "暫定Mission。API状態を確認してから再生成。",
     nextStep: "API設定を確認し、暫定Missionとして競合価格を3件確認する。",
+    needsMoreInfo: false,
+    followUpQuestions: [],
   };
 }
 
@@ -179,10 +185,12 @@ function normalizeResult(
       todayMission?: string | string[] | Partial<MissionDraft>[];
       dontDo?: string | string[];
       decisionLog?: string | string[];
+      followUpQuestions?: string | string[];
     };
     const decisionLog = normalizeStringArray(parsed.decisionLog, fallbackDecisionLog);
     const todayMission = normalizeMissionArray(parsed.todayMission, defaultResult.todayMission);
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
+    const followUpQuestions = normalizeStringArray(parsed.followUpQuestions, []).slice(0, 3);
 
     return {
       verdict: normalizeVerdict(parsed.verdict),
@@ -202,6 +210,8 @@ function normalizeResult(
       atlasComment: parsed.atlasComment?.trim() || fallbackAtlasComment,
       atlasOneLine: parsed.atlasOneLine?.trim() || defaultResult.atlasOneLine,
       nextStep: parsed.nextStep?.trim() || defaultResult.nextStep,
+      needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
+      followUpQuestions,
     };
   } catch {
     return {
@@ -464,7 +474,9 @@ JSON:
   ],
   "atlasComment": "今回なぜ優先順位を変更したか",
   "atlasOneLine": "短い一言",
-  "nextStep": "次の一手"
+  "nextStep": "次の一手",
+  "needsMoreInfo": false,
+  "followUpQuestions": ["短く具体的な質問1", "短く具体的な質問2"]
 }
 
 判断ルール:
@@ -481,6 +493,13 @@ JSON:
 - ユーザーが提供していない実績、顧客名、導入事例、売上実績を捏造しない
 - 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
 
+- needsMoreInfoは、現在の判断を大きく左右する重要情報が不足している時だけtrueにする
+- 情報が十分なら needsMoreInfo は false、followUpQuestions は [] にする
+- followUpQuestionsは最大3問
+- 質問は、そのユーザーの不足情報だけを聞く。既にProfile、Interview、History、Memoryで分かっていることは聞かない
+- 1問は短く、答えやすく、長文入力を前提にしない
+- 一般論の質問や広すぎる質問はしない
+- missingCriticalInfo が次の判断に重要なら、その不足だけを具体的に質問する
 ${missionReadinessRules}
 ${missionContinuationRules ? `\n${missionContinuationRules}` : ""}
 
