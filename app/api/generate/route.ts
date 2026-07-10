@@ -339,6 +339,58 @@ function buildAtlasComment(
   return defaultResult.atlasComment;
 }
 
+function buildCurrentStateMap(payload: GeneratePayload) {
+  const interviewAnswers = payload.interviewAnswers ?? [];
+  const atlasProfile = payload.atlasProfile;
+  const missionHistory = payload.missionHistory ?? [];
+  const missions = payload.missions ?? [];
+  const conversationHistory = payload.conversationHistory ?? [];
+  const missionContinuation = payload.missionContinuation;
+  const completedMissions = missionContinuation?.completedMissions ?? [];
+  const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean);
+  const memory = payload.memory;
+  const recentMissionHistory = missionHistory.slice(-3);
+  const recentConversationHistory = conversationHistory.slice(-3);
+
+  return [
+    "Current State Map:",
+    "- Build this map before verdict or Mission generation.",
+    "- Use only the provided Atlas Profile, Interview Answers, completed Missions, Mission History, Conversation History, Summary, and Memory.",
+    "- Do not invent facts the user did not say.",
+    "- If a field is not supported by evidence, write unknown or 未確認.",
+    "- Keep facts and inference separate. If you infer, say it is tentative.",
+    "- Prefer newer actions, outcomes, and conversation over older summaries.",
+    "- Mission generation must explicitly reference this Current State Map.",
+    "- If missingCriticalInfo exists, do not rush into a definitive next step. Prefer a prerequisite or clarification Mission.",
+    "- currentStage must be chosen only from: exploring, defining, validating, selling, repeating, optimizing, scaling, unknown.",
+    "",
+    "Current State Map fields to fill:",
+    `goal: ${memory?.goal?.trim() || payload.profile?.targetRevenue?.trim() || "unknown"}`,
+    "currentStage: choose from exploring, defining, validating, selling, repeating, optimizing, scaling, unknown based on evidence only",
+    "decided: list only decisions already made and supported by evidence",
+    "undecided: list what remains undecided based on conflicting, missing, or absent evidence",
+    "constraints: summarize only explicit time, budget, job, environment, or capability constraints",
+    `availableTime: ${payload.profile?.availableTime?.trim() || "unknown"}`,
+    "availableBudget: use only explicit budget or cost information, otherwise unknown",
+    `strengths: ${atlasProfile?.strength.length ? atlasProfile.strength.join(" / ") : "unknown"}`,
+    "attemptedActions: summarize only actions already tried",
+    "observedResults: summarize only observed outcomes from those actions",
+    "biggestBlocker: the strongest current blocker supported by recent evidence, otherwise unknown",
+    "missingCriticalInfo: the single most important missing information for the next decision, otherwise unknown",
+    "",
+    "Evidence for Current State Map:",
+    `- Atlas Profile: ${atlasProfile ? `Type: ${atlasProfile.profileType}; Strength: ${atlasProfile.strength.join(" / ") || "unknown"}; Weakness: ${atlasProfile.weakness.join(" / ") || "unknown"}; Recommended Strategy: ${atlasProfile.recommendedStrategy.join(" / ") || "unknown"}; Updated At: ${atlasProfile.updatedAt}` : "未確認"}`,
+    `- Interview Answers: ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join(" | ") : "未確認"}`,
+    `- Completed Missions: ${completedMissions.length > 0 ? completedMissions.map((mission) => mission.title).join(" / ") : "未確認"}`,
+    `- Mission History: ${recentMissionHistory.length > 0 ? recentMissionHistory.map((entry) => `${entry.date} / ${entry.mission} / ${entry.status}${entry.note ? ` / ${entry.note}` : ""}`).join(" | ") : "未確認"}`,
+    `- Conversation History: ${recentConversationHistory.length > 0 ? recentConversationHistory.map((entry) => `${entry.date}: ${entry.content}`).join(" | ") : "未確認"}`,
+    `- Summary: ${summary.length > 0 ? summary.join(" | ") : "未確認"}`,
+    `- Memory: ${memory ? `Goal: ${memory.goal || "unknown"}; Today Mission: ${memory.todayMission || "unknown"}; Last Conversation: ${memory.lastConversation || "unknown"}; Homework: ${memory.homework || "unknown"}` : "未確認"}`,
+    `- Active Missions: ${missions.length > 0 ? missions.map((mission) => `${mission.title ?? mission.label ?? "Mission"} (${mission.done ? "done" : "not done"})`).join(" / ") : "未確認"}`,
+    `- Mission Outcome: ${missionContinuation?.outcome || "未確認"}`,
+  ].join("\n");
+}
+
 function buildPrompt(payload: GeneratePayload) {
   const interviewAnswers = payload.interviewAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
@@ -347,6 +399,7 @@ function buildPrompt(payload: GeneratePayload) {
   const conversationHistory = payload.conversationHistory ?? [];
   const missionContinuation = payload.missionContinuation;
   const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean).join("\n");
+  const currentStateMap = buildCurrentStateMap(payload);
   const exampleFormatting = [
     "Example Formatting:",
     "- Return example as plain text only.",
@@ -358,6 +411,7 @@ function buildPrompt(payload: GeneratePayload) {
   const missionReadinessRules = [
     "Mission Readiness Rules:",
     "- Before creating todayMission, inspect Atlas Profile, Interview Answers, Mission History, completed Missions, Memory, Summary, and Conversation History.",
+    "- Build and review the Current State Map first, then use it as the main reference for verdict and Mission generation.",
     "- Decide todayMission in this order: 1) confirm what the user has already decided, 2) identify prerequisites for the next action, 3) if prerequisites are missing, assign the immediately previous prerequisite-building Mission, 4) only if prerequisites are ready, assign the smallest execution Mission.",
     "- The Mission must be doable today, preferably within 60 minutes, low risk, minimal in scope, and must not skip the previous stage.",
     "- Do not assign company sales outreach unless target customer, customer problem, and offered value are already clear.",
@@ -374,6 +428,7 @@ function buildPrompt(payload: GeneratePayload) {
         "Mission Continuation Rules:",
         "- This request is after Mission completion. Do not require a full Interview and do not ask interview questions.",
         "- Rejudge the user's current position using Mission Outcome, Completed Mission, Atlas Profile, Mission History, and Conversation History.",
+        "- Rebuild the Current State Map from the latest evidence before deciding GO or HOLD.",
         "- If the user can move now, return verdict GO and create the next smallest Mission in todayMission using the existing fields: title, action, deliverable, doneCriteria, timeEstimate, example.",
         "- If the user should not move now, return verdict HOLD, return todayMission as an empty array, set conclusion to a short waiting judgment, put the reason in reasons[0], and put the restart condition in nextStep.",
         "- For outcome '反応待ち', prefer HOLD unless there is a low-risk preparation task that does not skip the waiting step.",
@@ -428,6 +483,8 @@ JSON:
 
 ${missionReadinessRules}
 ${missionContinuationRules ? `\n${missionContinuationRules}` : ""}
+
+${currentStateMap}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
