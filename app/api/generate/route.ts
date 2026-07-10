@@ -44,6 +44,16 @@ type FollowUpAnswerInput = {
   answer: string;
 };
 
+type UserArtifactInput = {
+  id: string;
+  type: "mission_artifact";
+  source: "user";
+  missionTitle: string;
+  missionAction: string;
+  content: string;
+  sharedAt: string;
+};
+
 type ReadinessNeed = {
   key: "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
   question: string;
@@ -128,6 +138,7 @@ type GeneratePayload = {
   atlasProfile?: AtlasProfileInput;
   interviewAnswers?: InterviewAnswerInput[];
   followUpAnswers?: FollowUpAnswerInput[];
+  userArtifacts?: UserArtifactInput[];
   missionContinuation?: {
     outcome: "できた" | "反応待ち" | "うまくいかなかった" | "別の発見があった";
     completedMissions: Array<{
@@ -429,6 +440,8 @@ type EvidenceContext = {
   statedIntent: string[];
   observedResults: string[];
   unverifiedHypotheses: string[];
+  sharedArtifacts: string[];
+  sharedArtifactTopics: Array<"goal" | "customerProblem" | "offerOrStrength">;
   availableTime: string;
   availableBudget: string;
   goal: string;
@@ -455,11 +468,51 @@ function extractAnswerValue(entry: string) {
   return separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : entry.trim();
 }
 
+function collectSharedUserArtifacts(payload: GeneratePayload) {
+  return (payload.userArtifacts ?? [])
+    .filter(
+      (artifact) =>
+        artifact?.type === "mission_artifact" &&
+        artifact.source === "user" &&
+        typeof artifact.content === "string" &&
+        hasSubstance(artifact.content),
+    )
+    .sort((left, right) => Date.parse(right.sharedAt) - Date.parse(left.sharedAt))
+    .slice(0, 10);
+}
+
+function collectSharedArtifactTopics(artifacts: UserArtifactInput[]) {
+  const topics = new Set<"goal" | "customerProblem" | "offerOrStrength">();
+
+  artifacts.forEach((artifact) => {
+    const content = artifact.content.trim();
+    // AI-generated mission metadata only identifies the artifact's topic; content remains the user-authored input.
+    const metadata = `${artifact.missionTitle} ${artifact.missionAction}`;
+
+    if (/目標|目指|副収入|収入|独立|働き方|変えたい|優先|将来/.test(content) || /目標|目指|収入|独立|変えたい|優先/.test(metadata)) {
+      topics.add("goal");
+    }
+
+    if (/対象者|顧客|困りごと|悩み|課題|不安|誰|人/.test(content) || /対象者|顧客|困りごと|悩み|課題/.test(metadata)) {
+      topics.add("customerProblem");
+    }
+
+    if (/経験|興味|頼まれ|強み|できる|提供|スキル|価値/.test(content) || /経験|興味|頼まれ|強み|提供|スキル|価値/.test(metadata)) {
+      topics.add("offerOrStrength");
+    }
+  });
+
+  return [...topics];
+}
+
 function collectStructuredEvidence(payload: GeneratePayload): EvidenceContext {
   const answerValuesFromLegacyAnswers = (payload.answers ?? []).map((entry) => extractAnswerValue(entry));
   const interviewAnswers = payload.interviewAnswers ?? [];
   const followUpAnswers = payload.followUpAnswers ?? [];
   const missionHistory = payload.missionHistory ?? [];
+  const sharedUserArtifacts = collectSharedUserArtifacts(payload);
+  const sharedArtifacts = dedupeEvidence(sharedUserArtifacts.map((artifact) => artifact.content));
+  const sharedArtifactTopics = collectSharedArtifactTopics(sharedUserArtifacts);
   const statedFacts = dedupeEvidence([
     ...answerValuesFromLegacyAnswers,
     ...interviewAnswers
@@ -491,6 +544,8 @@ function collectStructuredEvidence(payload: GeneratePayload): EvidenceContext {
     statedIntent: dedupeEvidence(intentCandidates.filter((entry) => !unverifiedHypotheses.includes(entry))),
     observedResults,
     unverifiedHypotheses,
+    sharedArtifacts,
+    sharedArtifactTopics,
     availableTime: interviewAnswers.find((entry) => ["weekdayTime", "reTime"].includes(entry.questionId))?.answer ?? "",
     availableBudget: interviewAnswers.find((entry) => ["initialCost", "budget", "reBudget"].includes(entry.questionId))?.answer ?? "",
     goal: interviewAnswers.find((entry) => ["revenueTarget", "reMoney", "priority", "rePriority"].includes(entry.questionId))?.answer ?? "",
@@ -600,13 +655,13 @@ function containsConcreteOfferOrStrength(values: string[]) {
 
 function detectReadinessNeeds(payload: GeneratePayload, result: AtlasResult): ReadinessNeed[] {
   const evidence = collectStructuredEvidence(payload);
-  const hasGoal = hasSubstance(evidence.goal);
-  const hasCustomerProblem = hasSubstance(evidence.customerProblem);
+  const hasGoal = hasSubstance(evidence.goal) || evidence.sharedArtifactTopics.includes("goal");
+  const hasCustomerProblem = hasSubstance(evidence.customerProblem) || evidence.sharedArtifactTopics.includes("customerProblem");
   const hasOfferOrStrength = containsConcreteOfferOrStrength([
     evidence.offerOrStrength,
     ...evidence.statedFacts,
     ...evidence.observedResults,
-  ]);
+  ]) || evidence.sharedArtifactTopics.includes("offerOrStrength");
   const hasAvailableTime = hasSubstance(evidence.availableTime);
   const budgetRequiredByMission = result.todayMission.some((mission) =>
     [mission.title, mission.action, mission.deliverable, mission.doneCriteria]
@@ -670,11 +725,33 @@ function buildDiscoveryMission(unresolvedNeeds: ReadinessNeed["key"][]): Mission
   return first && missionMap[first] ? [missionMap[first] as MissionDraft] : [];
 }
 
-function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): MissionDraft[] {
-  const strengths = payload.followUpAnswers?.map((entry) => entry.answer).find(hasSubstance)
-    || payload.interviewAnswers?.map((entry) => entry.answer).find(hasSubstance)
-    || "自分の経験";
+function normalizeMissionPurpose(value: string) {
+  return value.toLowerCase().replace(/[ 　\t\r\n。、，,!.！?？ー\-:：]/g, "");
+}
 
+function collectCompletedMissionTitles(payload: GeneratePayload) {
+  return [
+    ...(payload.missionContinuation?.completedMissions.map((mission) => mission.title) ?? []),
+    ...(payload.missionHistory ?? []).filter((entry) => entry.status === "完了").map((entry) => entry.mission),
+  ].filter(hasSubstance);
+}
+
+function hasCompletedMissionPurpose(
+  mission: MissionDraft,
+  purposePattern: RegExp,
+  completedMissionTitles: string[],
+) {
+  const normalizedTitle = normalizeMissionPurpose(mission.title);
+
+  return completedMissionTitles.some((completedTitle) => {
+    const normalizedCompletedTitle = normalizeMissionPurpose(completedTitle);
+    return normalizedCompletedTitle === normalizedTitle || purposePattern.test(completedTitle);
+  });
+}
+
+function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): MissionDraft[] {
+  const hasSharedArtifacts = collectStructuredEvidence(payload).sharedArtifacts.length > 0;
+  const completedMissionTitles = collectCompletedMissionTitles(payload);
   const safeMissionMap: Record<Exclude<CurrentStage, "unknown" | "optimizing" | "scaling">, MissionDraft> = {
     exploring: {
       title: "自分の経験と興味を3つ整理する",
@@ -682,7 +759,7 @@ function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): M
       deliverable: "経験と興味の候補3項目",
       doneCriteria: "3項目が短文で整理されている",
       timeEstimate: "10分",
-      example: `1. ${strengths}\n2. 人から頼まれたこと\n3. 気になっている分野`,
+      example: "これまでの仕事\n人によく頼まれること\n長く続けている趣味",
     },
     defining: {
       title: "対象者と悩みを1組に絞る",
@@ -720,6 +797,57 @@ function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): M
 
   if (stage === "optimizing" || stage === "scaling" || stage === "unknown") {
     return [];
+  }
+
+  if (stage === "exploring") {
+    const exploringMissions = [
+      {
+        purposePattern: /経験|興味|頼まれたこと|強み/,
+        mission: safeMissionMap.exploring,
+      },
+      {
+        purposePattern: /困りごと|悩み|課題/,
+        mission: {
+          title: "解決したい困りごと候補を3つ絞る",
+          action: hasSharedArtifacts
+            ? "Atlasと共有した内容を見直し、解決したい困りごと候補を3つ書き出す"
+            : "自分や身近な人が困ることから、解決したい候補を3つ書き出す",
+          deliverable: "困りごと候補3項目",
+          doneCriteria: "確認したい困りごとが3項目並んでいる",
+          timeEstimate: "10分",
+          example: "時間がかかること\n繰り返し発生すること\nお金を払ってでも減らしたいこと",
+        },
+      },
+      {
+        purposePattern: /対象者|仮説/,
+        mission: {
+          title: "対象者と困りごとの仮説を1つ決める",
+          action: hasSharedArtifacts
+            ? "Atlasと共有した候補から、誰のどの困りごとを確かめるか1組に絞る"
+            : "対象者と、その人が抱えているかもしれない困りごとを1組に絞る",
+          deliverable: "対象者と困りごとの仮説1組",
+          doneCriteria: "対象者と確認したい困りごとが1文で書けている",
+          timeEstimate: "10分",
+          example: "対象者: 同じ状況にいる人\n困りごと: 時間がかかること",
+        },
+      },
+      {
+        purposePattern: /確認.*質問|質問.*確認|確認.*準備|仮説.*確認/,
+        mission: {
+          title: "仮説を確認するための質問を3つ作る",
+          action: "選んだ仮説を確かめるために、実際に相手へ聞く質問を3つ書く",
+          deliverable: "確認質問3つ",
+          doneCriteria: "相手にそのまま聞ける質問が3つ並んでいる",
+          timeEstimate: "10分",
+          example: "今、最も時間がかかっていることは何ですか？\nそれを変えるために試したことはありますか？\n改善できたら何が一番楽になりますか？",
+        },
+      },
+    ];
+
+    const nextMission = exploringMissions.find(
+      ({ mission, purposePattern }) => !hasCompletedMissionPurpose(mission, purposePattern, completedMissionTitles),
+    );
+    return nextMission ? [nextMission.mission] : [];
   }
 
   return [safeMissionMap[stage]];
@@ -1099,6 +1227,10 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
     "- statedIntent: treat only as hope, goal, or plan. Do not rewrite as completed action or proven result.",
     "- observedResults: may be used as actual action or outcome.",
     "- unverifiedHypotheses: always present as unverified assumptions to test.",
+    "- sharedArtifacts: user-authored artifacts explicitly shared with Atlas. Use them with high confidence for personalization, Mission specificity, and preserving the user's own wording.",
+    "- Do not ask again for information already expressed in sharedArtifacts.",
+    "- When a sharedArtifact clearly covers a goal, customer problem, or offer/strength candidate, treat only that base topic as already organized at the hypothesis level. Ask the next-stage question or create the next smallest Mission instead of repeating the base question.",
+    "- Never promote sharedArtifacts into external facts, completed actions, customer reactions, customer needs, market demand, sales proof, or likelihood of success. Those claims still require observedResults.",
     "- Forbidden: unsupported 'your strength is ...' claims.",
     "- Forbidden: treating goals as traction or execution.",
     "- Forbidden: treating AI-generated customer problems, summaries, memory text, or mission text as validated customer needs.",
@@ -1187,6 +1319,9 @@ ${evidence.observedResults.length > 0 ? evidence.observedResults.join("\n") : "u
 
 unverifiedHypotheses:
 ${evidence.unverifiedHypotheses.length > 0 ? evidence.unverifiedHypotheses.join("\n") : "unknown"}
+
+Shared User Artifacts:
+${evidence.sharedArtifacts.length > 0 ? evidence.sharedArtifacts.join("\n\n") : "unknown"}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}

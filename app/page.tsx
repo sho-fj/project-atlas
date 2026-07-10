@@ -312,6 +312,34 @@ function readStoredValue<T>(key: string, fallback: T): T {
   }
 }
 
+function readUserArtifactsForGeneration(): UserArtifact[] {
+  try {
+    const artifacts = readStoredValue<UserArtifact[]>("atlas-user-artifacts", []);
+
+    if (!Array.isArray(artifacts)) {
+      return [];
+    }
+
+    return artifacts
+      .filter((artifact): artifact is UserArtifact =>
+        Boolean(
+          artifact &&
+            artifact.type === "mission_artifact" &&
+            artifact.source === "user" &&
+            typeof artifact.id === "string" &&
+            typeof artifact.missionTitle === "string" &&
+            typeof artifact.missionAction === "string" &&
+            typeof artifact.content === "string" &&
+            typeof artifact.sharedAt === "string",
+        ),
+      )
+      .sort((left, right) => Date.parse(right.sharedAt) - Date.parse(left.sharedAt))
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
 function readStoredText(key: string, fallback = "") {
   if (typeof window === "undefined") {
     return fallback;
@@ -509,6 +537,7 @@ export default function HomePage() {
   };
 
   const executeAtlasGeneration = async (context: GenerationContext, pendingFollowUpAnswers: FollowUpAnswer[] = []) => {
+    const userArtifacts = readUserArtifactsForGeneration();
     const interviewSummary = context.answers.map((item) => `${item.question}: ${item.answer}`).join("\n");
     const profileSummary = [
       `Profile Type: ${context.profile.profileType}`,
@@ -530,8 +559,10 @@ export default function HomePage() {
     );
 
     setConversationHistory(nextConversationHistory);
-    setLoadingComplete(false);
-    setScreen("loading");
+    if (context.kind !== "continuation") {
+      setLoadingComplete(false);
+      setScreen("loading");
+    }
 
     const body =
       context.kind === "continuation"
@@ -546,6 +577,7 @@ export default function HomePage() {
             missionHistory,
             conversationHistory: nextConversationHistory,
             followUpAnswers: pendingFollowUpAnswers,
+            userArtifacts,
             missionContinuation: {
               outcome: context.outcome,
               completedMissions: context.completedMissions.map((mission) => ({
@@ -568,6 +600,7 @@ export default function HomePage() {
             missionHistory,
             conversationHistory: nextConversationHistory,
             followUpAnswers: pendingFollowUpAnswers,
+            userArtifacts,
           };
 
     const response = await fetch("/api/generate", {
@@ -886,12 +919,16 @@ export default function HomePage() {
         return { status: "mission" };
       }
 
+      setLoadingComplete(true);
+      setScreen("mission");
       return {
         status: "wait",
         reason: nextResult.reasons[0] || nextResult.conclusion || "次の判断材料がまだ不足しています。",
         resumeCondition: nextResult.nextStep || "反応や結果が返ってきたら再開する。",
       };
     } catch {
+      setLoadingComplete(true);
+      setScreen("mission");
       return {
         status: "wait",
         reason: "継続Missionの判断に失敗しました。",
@@ -2005,7 +2042,7 @@ function MissionPanel({
               <p className="text-[12px] font-black uppercase tracking-[0.2em] text-emerald-500">MISSION COMPLETE</p>
               <h2 className="mt-2 text-3xl font-black tracking-normal text-slate-950">一歩、進みました。</h2>
               <p className="mt-3 whitespace-pre-line text-sm font-bold leading-7 text-slate-500">
-                {`今回の結果をもとに、\n次の一歩を決めましょう。`}
+                {`次の判断のために、\n今回どうだったか教えてください。`}
               </p>
             </div>
 
@@ -2016,7 +2053,7 @@ function MissionPanel({
                   onClick={() => setIsContinuationOpen(true)}
                   className="flex min-h-14 items-center justify-center gap-2 rounded-[18px] bg-[#182033] px-5 text-base font-black text-white shadow-[0_14px_30px_rgba(24,32,51,0.14)] transition duration-200 hover:-translate-y-0.5 hover:bg-slate-950 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                 >
-                  もう一歩進める
+                  結果をAtlasと共有
                   <ArrowRight className="h-5 w-5" />
                 </button>
               )}
