@@ -280,6 +280,58 @@ function normalizeStringArray(value: unknown, fallback: string[]) {
   return fallback;
 }
 
+function stripMarkdown(value: string) {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/^\s*[-*#]\s+/gm, "")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/[`]/g, "")
+    .trim();
+}
+
+function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "deliverable" | "doneCriteria">) {
+  const title = mission.title.trim();
+  const action = mission.action?.trim();
+  const deliverable = mission.deliverable?.trim();
+  const doneCriteria = mission.doneCriteria?.trim();
+  const lower = `${title} ${action ?? ""} ${deliverable ?? ""}`.toLowerCase();
+
+  if (/価格|競合/.test(lower)) {
+    return stripMarkdown(
+      "競合A 30000円 週1回相談\n競合B 50000円 チャット相談付き\n競合C 20000円 単発アドバイス",
+    );
+  }
+
+  if (/提案|送信|営業|連絡|メッセージ/.test(lower)) {
+    return stripMarkdown(
+      "相手Aさん\n突然のご連絡失礼します。\n○○の課題を見て、△△でお手伝いできると思いご連絡しました。\n必要であれば、まずは短く状況を伺えます。",
+    );
+  }
+
+  if (/困りごと|悩み|書き出/.test(lower)) {
+    return stripMarkdown("1. 毎日の作業が手間\n2. 情報整理に時間がかかる\n3. 続け方が分からない");
+  }
+
+  if (/頼まれたこと|振り返/.test(lower)) {
+    return stripMarkdown("1. 資料を見やすく整える\n2. 手順を分かりやすく説明する\n3. 作業の進め方を整理する");
+  }
+
+  if (/変えたいこと|選ぶ/.test(lower)) {
+    return stripMarkdown("1. 収入源を増やしたい\n2. 時間の使い方を改善したい\n3. 将来の選択肢を増やしたい");
+  }
+
+  return stripMarkdown(
+    [
+      title,
+      action ? `やること: ${action}` : "",
+      deliverable ? `完成物: ${deliverable}` : "",
+      doneCriteria ? `完了条件: ${doneCriteria}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
 function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
   if (Array.isArray(value)) {
     if (value.length === 0) {
@@ -309,7 +361,12 @@ function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
           deliverable: mission.deliverable?.trim() || undefined,
           doneCriteria: mission.doneCriteria?.trim() || undefined,
           timeEstimate: mission.timeEstimate?.trim() || undefined,
-          example: mission.example?.trim() || undefined,
+          example: stripMarkdown(mission.example?.trim() || "") || buildMissionExample({
+            title,
+            action: mission.action?.trim() || undefined,
+            deliverable: mission.deliverable?.trim() || undefined,
+            doneCriteria: mission.doneCriteria?.trim() || undefined,
+          }),
         };
       })
       .filter((item): item is MissionDraft => Boolean(item));
@@ -708,7 +765,10 @@ JSON:
 - timeEstimateは「20分」「45分」のように短く書く
 - exampleは成果物そのものだけを書く。説明文やメタ文は入れない
 - exampleは改行を含めてよく、そのままコピーして自分用に少し書き換えれば使える形にする
-- exampleを自然に作れないMissionではexampleを省略してよい
+- exampleは全Missionで必須。空文字は禁止
+- exampleはそのMissionで実際に作る成果物の完成例にする
+- exampleはtitle, action, deliverable, doneCriteriaに具体的に対応させる
+- exampleはそのままコピーして書き換えられる本文にする
 - ユーザーが提供していない実績、顧客名、導入事例、売上実績を捏造しない
 - 必要な固有名詞がない場合は「相手A」「○○」「△△」などの仮名を使う
 
