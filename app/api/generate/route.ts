@@ -39,6 +39,39 @@ type InterviewAnswerInput = {
   answer: string;
 };
 
+type FollowUpAnswerInput = {
+  question: string;
+  answer: string;
+};
+
+type ReadinessNeed = {
+  key: "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
+  question: string;
+};
+
+const followUpQuestionConfig = {
+  goal: {
+    question: "何を目指していますか？",
+    options: ["まず副収入を作りたい", "将来的に独立したい", "新しい可能性を探したい", "まだ分からない"],
+  },
+  customerProblem: {
+    question: "誰のどんな悩みを扱いたいですか？",
+    options: ["仕事で困っている人", "自分と似た悩みを持つ人", "身近な人", "まだ分からない"],
+  },
+  offerOrStrength: {
+    question: "今、使えそうなものはありますか？",
+    options: ["これまでの仕事経験", "人から頼まれること", "趣味や詳しいこと", "まだ分からない"],
+  },
+  availableTime: {
+    question: "週にどれくらい時間を使えますか？",
+    options: ["1時間未満", "1〜3時間", "4〜7時間", "8時間以上"],
+  },
+  availableBudget: {
+    question: "最初に使える費用はどれくらいですか？",
+    options: ["0円", "1万円まで", "5万円まで", "それ以上"],
+  },
+} satisfies Record<ReadinessNeed["key"], { question: string; options: string[] }>;
+
 type AtlasProfileInput = {
   profileType: string;
   valueMap: Record<string, number>;
@@ -84,6 +117,7 @@ type GeneratePayload = {
   conversationHistory?: Array<{ date: string; content: string }>;
   atlasProfile?: AtlasProfileInput;
   interviewAnswers?: InterviewAnswerInput[];
+  followUpAnswers?: FollowUpAnswerInput[];
   missionContinuation?: {
     outcome: "できた" | "反応待ち" | "うまくいかなかった" | "別の発見があった";
     completedMissions: Array<{
@@ -172,6 +206,7 @@ function buildSafeFallbackResult(
 
 function normalizeResult(
   text: string,
+  payload: GeneratePayload,
   interviewAnswers: InterviewAnswerInput[] = [],
   atlasProfile?: AtlasProfileInput,
 ): AtlasResult {
@@ -192,7 +227,7 @@ function normalizeResult(
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
     const followUpQuestions = normalizeStringArray(parsed.followUpQuestions, []).slice(0, 3);
 
-    return {
+    const normalized = {
       verdict: normalizeVerdict(parsed.verdict),
       conclusion: parsed.conclusion?.trim() || defaultResult.conclusion,
       reasons: normalizeStringArray(parsed.reasons, defaultResult.reasons).slice(0, 5),
@@ -213,13 +248,14 @@ function normalizeResult(
       needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
       followUpQuestions,
     };
+    return applyHardReadinessGate(payload, normalized);
   } catch {
-    return {
+    return applyHardReadinessGate(payload, {
       ...defaultResult,
       salesSimulation: emptySalesSimulation,
       decisionLog: fallbackDecisionLog,
       atlasComment: fallbackAtlasComment,
-    };
+    });
   }
 }
 
@@ -288,6 +324,186 @@ function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
   return fallback;
 }
 
+function hasSubstance(value?: string) {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[ 　\t\r\n]+/g, "")
+    .replace(/[。．、，,!.！?？ー\-]/g, "");
+  return Boolean(
+    normalized &&
+      ![
+        "unknown",
+        "未確認",
+        "未設定",
+        "未登録",
+        "なし",
+        "n/a",
+        "分からない",
+        "わからない",
+        "未定",
+        "まだ決めていない",
+        "特になし",
+        "その他",
+        "なんとなく",
+      ]
+        .map((item) => item.toLowerCase().replace(/[ 　\t\r\n]+/g, ""))
+        .includes(normalized),
+  );
+}
+
+function collectUserEvidence(payload: GeneratePayload) {
+  const answerValuesFromLegacyAnswers = (payload.answers ?? []).map((entry) => {
+    const separatorIndex = entry.indexOf(":");
+    return separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : entry.trim();
+  });
+
+  return {
+    answerValues: [
+      ...answerValuesFromLegacyAnswers,
+      ...(payload.interviewAnswers ?? []).map((entry) => entry.answer),
+      ...(payload.followUpAnswers ?? []).map((entry) => entry.answer),
+    ].filter(hasSubstance),
+    missionResultValues: (payload.missionHistory ?? [])
+      .flatMap((entry) => [entry.mission, entry.note])
+      .filter(hasSubstance),
+    availableTime: payload.interviewAnswers?.find((entry) => ["weekdayTime", "reTime"].includes(entry.questionId))?.answer ?? "",
+    goal:
+      payload.interviewAnswers?.find((entry) => ["revenueTarget", "reMoney", "priority", "rePriority"].includes(entry.questionId))
+        ?.answer ?? "",
+    customerProblem:
+      payload.interviewAnswers?.find((entry) => ["who", "customer", "problem", "customerProblem", "reCustomer"].includes(entry.questionId))
+        ?.answer ?? "",
+    offerOrStrength:
+      payload.followUpAnswers?.find((entry) => hasSubstance(entry.answer) && /提供|できる|得意|経験|強み|スキル|価値/.test(entry.question))
+        ?.answer ??
+      payload.interviewAnswers?.find((entry) => ["value", "offer", "strength", "experience", "reOffer"].includes(entry.questionId))
+        ?.answer ??
+      "",
+    availableBudget:
+      payload.interviewAnswers?.find((entry) => ["initialCost", "budget", "reBudget"].includes(entry.questionId))?.answer ?? "",
+    answeredFollowUpKeys: (payload.followUpAnswers ?? [])
+      .map((entry) => entry.question as ReadinessNeed["key"])
+      .filter((key): key is ReadinessNeed["key"] => key in followUpQuestionConfig),
+  };
+}
+
+function containsConcreteOfferOrStrength(values: string[]) {
+  return values.some((value) => {
+    const normalized = value.trim();
+    return hasSubstance(normalized) && normalized.length >= 4 && /経験|実績|得意|スキル|作れる|教えられる|支援|代行|改善|設計|分析|開発|営業|制作/.test(normalized);
+  });
+}
+
+function detectReadinessNeeds(payload: GeneratePayload, result: AtlasResult): ReadinessNeed[] {
+  const evidence = collectUserEvidence(payload);
+  const hasGoal = hasSubstance(evidence.goal);
+  const hasCustomerProblem = hasSubstance(evidence.customerProblem);
+  const hasOfferOrStrength = containsConcreteOfferOrStrength([
+    evidence.offerOrStrength,
+    ...evidence.answerValues,
+    ...evidence.missionResultValues,
+  ]);
+  const hasAvailableTime = hasSubstance(evidence.availableTime);
+  const budgetRequiredByMission = result.todayMission.some((mission) =>
+    [mission.title, mission.action, mission.deliverable, mission.doneCriteria]
+      .filter(Boolean)
+      .join(" ")
+      .match(/広告|出稿|ツール|開発|制作|外注|仕入|購入|有料/),
+  );
+  const hasAvailableBudget = hasSubstance(evidence.availableBudget);
+
+  const needs: ReadinessNeed[] = [];
+
+  if (!hasGoal) {
+    needs.push({ key: "goal", question: "何を目指していますか？" });
+  }
+
+  if (!hasCustomerProblem) {
+    needs.push({ key: "customerProblem", question: "誰のどんな悩みを扱いたいですか？" });
+  }
+
+  if (!hasOfferOrStrength) {
+    needs.push({ key: "offerOrStrength", question: "あなたが提供できそうなことは何ですか？" });
+  }
+
+  if (!hasAvailableTime) {
+    needs.push({ key: "availableTime", question: "週に何時間使えますか？" });
+  }
+
+  if (budgetRequiredByMission && !hasAvailableBudget) {
+    needs.push({ key: "availableBudget", question: "初期費用はいくらまで使えますか？" });
+  }
+
+  return needs.filter((need) => !evidence.answeredFollowUpKeys.includes(need.key));
+}
+
+function buildDiscoveryMission(unresolvedNeeds: ReadinessNeed["key"][]): MissionDraft[] {
+  const missionMap: Partial<Record<ReadinessNeed["key"], MissionDraft>> = {
+    goal: {
+      title: "今の生活で変えたいことを3つ選ぶ",
+      action: "今の生活や働き方で変えたいことを3つ箇条書きにする",
+      deliverable: "変えたいこと3項目",
+      doneCriteria: "3項目が短文で書き出せている",
+      timeEstimate: "10分",
+    },
+    customerProblem: {
+      title: "自分がよく知る3つの困りごとを書き出す",
+      action: "自分や身近な人がよく困ることを3つ書き出す",
+      deliverable: "困りごと3項目",
+      doneCriteria: "3つの困りごとが具体的に並んでいる",
+      timeEstimate: "10分",
+    },
+    offerOrStrength: {
+      title: "人から頼まれたことを3つ振り返る",
+      action: "これまで人から頼まれたことや感謝されたことを3つ書き出す",
+      deliverable: "頼まれたこと3項目",
+      doneCriteria: "3項目が思い出せている",
+      timeEstimate: "10分",
+    },
+  };
+
+  const first = unresolvedNeeds.find((need) => missionMap[need]);
+  return first && missionMap[first] ? [missionMap[first] as MissionDraft] : [];
+}
+
+function applyHardReadinessGate(payload: GeneratePayload, result: AtlasResult) {
+  const needs = detectReadinessNeeds(payload, result);
+  const missionText = result.todayMission
+    .flatMap((mission) => [mission.title, mission.action, mission.deliverable, mission.doneCriteria])
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const missionIsTooAggressive =
+    /営業|価格|値付|広告|開発|実装|出稿|提案/.test(missionText) &&
+    needs.some((need) => ["goal", "customerProblem", "offerOrStrength"].includes(need.key));
+
+  if (needs.length === 0 && !missionIsTooAggressive) {
+    return result;
+  }
+
+  const followUpQuestions = needs.slice(0, 3).map((need) => need.key);
+  const discoveryMission = followUpQuestions.length === 0 ? buildDiscoveryMission(needs.map((need) => need.key)) : [];
+
+  return {
+    ...result,
+    verdict: followUpQuestions.length > 0 ? ("HOLD" as const) : result.verdict,
+    conclusion:
+      followUpQuestions.length > 0
+        ? "追加情報を確認してから次のMissionを判断します。"
+        : "不明な項目を見つけるための小さなDiscovery Missionから始めます。",
+    reasons: ["次のMission判断に必要な情報がまだ不足しています。", ...result.reasons].slice(0, 5),
+    nextStep: discoveryMission[0]?.title ?? followUpQuestions[0] ?? result.nextStep,
+    needsMoreInfo: followUpQuestions.length > 0,
+    followUpQuestions,
+    todayMission: followUpQuestions.length > 0 ? [] : discoveryMission.length > 0 ? discoveryMission : result.todayMission,
+  };
+}
+
 function buildDecisionLog(
   interviewAnswers: InterviewAnswerInput[] = [],
   atlasProfile?: AtlasProfileInput,
@@ -351,6 +567,7 @@ function buildAtlasComment(
 
 function buildCurrentStateMap(payload: GeneratePayload) {
   const interviewAnswers = payload.interviewAnswers ?? [];
+  const followUpAnswers = payload.followUpAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
   const missionHistory = payload.missionHistory ?? [];
   const missions = payload.missions ?? [];
@@ -365,7 +582,7 @@ function buildCurrentStateMap(payload: GeneratePayload) {
   return [
     "Current State Map:",
     "- Build this map before verdict or Mission generation.",
-    "- Use only the provided Atlas Profile, Interview Answers, completed Missions, Mission History, Conversation History, Summary, and Memory.",
+    "- Use only the provided Atlas Profile, Interview Answers, Follow Up Answers, completed Missions, Mission History, Conversation History, Summary, and Memory.",
     "- Do not invent facts the user did not say.",
     "- If a field is not supported by evidence, write unknown or 未確認.",
     "- Keep facts and inference separate. If you infer, say it is tentative.",
@@ -391,6 +608,7 @@ function buildCurrentStateMap(payload: GeneratePayload) {
     "Evidence for Current State Map:",
     `- Atlas Profile: ${atlasProfile ? `Type: ${atlasProfile.profileType}; Strength: ${atlasProfile.strength.join(" / ") || "unknown"}; Weakness: ${atlasProfile.weakness.join(" / ") || "unknown"}; Recommended Strategy: ${atlasProfile.recommendedStrategy.join(" / ") || "unknown"}; Updated At: ${atlasProfile.updatedAt}` : "未確認"}`,
     `- Interview Answers: ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join(" | ") : "未確認"}`,
+    `- Follow Up Answers: ${followUpAnswers.length > 0 ? followUpAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join(" | ") : "未確認"}`,
     `- Completed Missions: ${completedMissions.length > 0 ? completedMissions.map((mission) => mission.title).join(" / ") : "未確認"}`,
     `- Mission History: ${recentMissionHistory.length > 0 ? recentMissionHistory.map((entry) => `${entry.date} / ${entry.mission} / ${entry.status}${entry.note ? ` / ${entry.note}` : ""}`).join(" | ") : "未確認"}`,
     `- Conversation History: ${recentConversationHistory.length > 0 ? recentConversationHistory.map((entry) => `${entry.date}: ${entry.content}`).join(" | ") : "未確認"}`,
@@ -403,6 +621,7 @@ function buildCurrentStateMap(payload: GeneratePayload) {
 
 function buildPrompt(payload: GeneratePayload) {
   const interviewAnswers = payload.interviewAnswers ?? [];
+  const followUpAnswers = payload.followUpAnswers ?? [];
   const atlasProfile = payload.atlasProfile;
   const missionHistory = payload.missionHistory ?? [];
   const missions = payload.missions ?? [];
@@ -420,7 +639,7 @@ function buildPrompt(payload: GeneratePayload) {
 
   const missionReadinessRules = [
     "Mission Readiness Rules:",
-    "- Before creating todayMission, inspect Atlas Profile, Interview Answers, Mission History, completed Missions, Memory, Summary, and Conversation History.",
+    "- Before creating todayMission, inspect Atlas Profile, Interview Answers, Follow Up Answers, Mission History, completed Missions, Memory, Summary, and Conversation History.",
     "- Build and review the Current State Map first, then use it as the main reference for verdict and Mission generation.",
     "- Decide todayMission in this order: 1) confirm what the user has already decided, 2) identify prerequisites for the next action, 3) if prerequisites are missing, assign the immediately previous prerequisite-building Mission, 4) only if prerequisites are ready, assign the smallest execution Mission.",
     "- The Mission must be doable today, preferably within 60 minutes, low risk, minimal in scope, and must not skip the previous stage.",
@@ -437,7 +656,7 @@ function buildPrompt(payload: GeneratePayload) {
     ? [
         "Mission Continuation Rules:",
         "- This request is after Mission completion. Do not require a full Interview and do not ask interview questions.",
-        "- Rejudge the user's current position using Mission Outcome, Completed Mission, Atlas Profile, Mission History, and Conversation History.",
+        "- Rejudge the user's current position using Mission Outcome, Completed Mission, Atlas Profile, Follow Up Answers, Mission History, and Conversation History.",
         "- Rebuild the Current State Map from the latest evidence before deciding GO or HOLD.",
         "- If the user can move now, return verdict GO and create the next smallest Mission in todayMission using the existing fields: title, action, deliverable, doneCriteria, timeEstimate, example.",
         "- If the user should not move now, return verdict HOLD, return todayMission as an empty array, set conclusion to a short waiting judgment, put the reason in reasons[0], and put the restart condition in nextStep.",
@@ -507,6 +726,9 @@ ${currentStateMap}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
+
+Follow Up Answers:
+${followUpAnswers.length > 0 ? followUpAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
 
 Atlas Profile:
 ${atlasProfile ? `Type: ${atlasProfile.profileType}
@@ -587,7 +809,7 @@ export async function POST(req: Request) {
     });
 
     return Response.json({
-      result: normalizeResult(response.text ?? "", interviewAnswers, atlasProfile),
+      result: normalizeResult(response.text ?? "", payload, interviewAnswers, atlasProfile),
       meta: {
         source: "gemini",
       },

@@ -45,6 +45,7 @@ type Screen =
   | "profileGenerating"
   | "profile"
   | "loading"
+  | "followUp"
   | "decision"
   | "result"
   | "mission";
@@ -78,6 +79,8 @@ type AtlasResult = {
   atlasComment: string;
   atlasOneLine: string;
   nextStep: string;
+  needsMoreInfo: boolean;
+  followUpQuestions: string[];
 };
 
 type AtlasApiResult = Omit<AtlasResult, "todayMission"> & {
@@ -127,6 +130,56 @@ type MissionContinuationResult =
       resumeCondition: string;
     };
 
+type FollowUpAnswer = {
+  question: string;
+  answer: string;
+};
+
+type FollowUpQuestionKey = "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
+
+const followUpQuestionConfig: Record<
+  FollowUpQuestionKey,
+  {
+    question: string;
+    options: string[];
+  }
+> = {
+  goal: {
+    question: "何を目指していますか？",
+    options: ["まず副収入を作りたい", "将来的に独立したい", "新しい可能性を探したい", "まだ分からない"],
+  },
+  customerProblem: {
+    question: "誰のどんな悩みを扱いたいですか？",
+    options: ["仕事で困っている人", "自分と似た悩みを持つ人", "身近な人", "まだ分からない"],
+  },
+  offerOrStrength: {
+    question: "今、使えそうなものはありますか？",
+    options: ["これまでの仕事経験", "人から頼まれること", "趣味や詳しいこと", "まだ分からない"],
+  },
+  availableTime: {
+    question: "週にどれくらい時間を使えますか？",
+    options: ["1時間未満", "1〜3時間", "4〜7時間", "8時間以上"],
+  },
+  availableBudget: {
+    question: "最初に使える費用はどれくらいですか？",
+    options: ["0円", "1万円まで", "5万円まで", "それ以上"],
+  },
+};
+
+type GenerationContext =
+  | {
+      kind: "initial";
+      profile: AtlasProfile;
+      answers: InterviewAnswer[];
+    }
+  | {
+      kind: "continuation";
+      profile: AtlasProfile;
+      answers: InterviewAnswer[];
+      outcome: MissionOutcome;
+      completedMissions: MissionItem[];
+    };
+
 type LegacyProfile = {
   name: string;
   targetRevenue: string;
@@ -158,6 +211,8 @@ const emptyResult: AtlasResult = {
   atlasComment: "完成度より販売接触を優先。売れるかどうかを最優先に変更しました。",
   atlasOneLine: "制約内で勝率が高い接触から開始。",
   nextStep: "今日60分で候補10件を抽出し、3件へ提案を送信する。",
+  needsMoreInfo: false,
+  followUpQuestions: [],
 };
 
 const ghostMessages = [
@@ -316,6 +371,9 @@ export default function HomePage() {
   const [showGhostEvent, setShowGhostEvent] = useState(false);
   const [showMissionComplete, setShowMissionComplete] = useState(false);
   const [atlasComment, setAtlasComment] = useState("Profile生成後、戦略を作成する。");
+  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswer[]>([]);
+  const [generationContext, setGenerationContext] = useState<GenerationContext | null>(null);
 
   useEffect(() => {
     const restoreTimer = window.setTimeout(() => {
@@ -390,6 +448,130 @@ export default function HomePage() {
     setScreen(atlasProfile ? "brief" : "welcome");
   };
 
+  const resetFollowUpState = () => {
+    setFollowUpQuestions([]);
+    setFollowUpAnswers([]);
+    setGenerationContext(null);
+  };
+
+  const buildConversationHistory = (
+    label: string,
+    content: string,
+    baseConversationHistory: ConversationEntry[],
+  ) =>
+    [
+      {
+        date: new Date().toLocaleDateString("ja-JP"),
+        content: `${label}\n${content}`,
+      },
+      ...baseConversationHistory,
+    ].slice(0, 30);
+
+  const finalizeAtlasResult = (nextResult: AtlasApiResult) => {
+    const extractedMissions = extractMissionItems(nextResult);
+    const normalizedResult = {
+      ...nextResult,
+      todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
+    };
+
+    setMissions(extractedMissions);
+    setResult(normalizedResult);
+    setAtlasComment(nextResult.atlasComment || atlasComment);
+    updateMemory(nextResult);
+    updateGhostCounter();
+    resetFollowUpState();
+    setLoadingComplete(true);
+    window.setTimeout(() => {
+      setScreen("decision");
+    }, 600);
+  };
+
+  const requestFollowUp = (nextResult: AtlasApiResult, context: GenerationContext) => {
+    setFollowUpQuestions(nextResult.followUpQuestions);
+    setFollowUpAnswers([]);
+    setGenerationContext(context);
+    setLoadingComplete(true);
+    setScreen("followUp");
+  };
+
+  const executeAtlasGeneration = async (context: GenerationContext, pendingFollowUpAnswers: FollowUpAnswer[] = []) => {
+    const interviewSummary = context.answers.map((item) => `${item.question}: ${item.answer}`).join("\n");
+    const profileSummary = [
+      `Profile Type: ${context.profile.profileType}`,
+      `Accuracy: ${context.profile.accuracy}%`,
+      `Strength: ${context.profile.strength.join(" / ")}`,
+      `Weakness: ${context.profile.weakness.join(" / ")}`,
+      `Recommended Strategy: ${context.profile.recommendedStrategy.join(" / ")}`,
+    ].join("\n");
+    const followUpSummary =
+      pendingFollowUpAnswers.length > 0
+        ? `\nFollow Up Answers:\n${pendingFollowUpAnswers.map((item) => `${item.question}: ${item.answer}`).join("\n")}`
+        : "";
+    const nextConversationHistory = buildConversationHistory(
+      context.kind === "continuation" ? "Mission Continuation" : "Atlas Interview",
+      context.kind === "continuation"
+        ? `Outcome: ${context.outcome}\nCompleted Missions:\n${context.completedMissions.map((mission) => getMissionTitle(mission)).join("\n")}${followUpSummary}`
+        : `${interviewSummary}\n${profileSummary}${followUpSummary}`,
+      conversationHistory,
+    );
+
+    setConversationHistory(nextConversationHistory);
+    setLoadingComplete(false);
+    setScreen("loading");
+
+    const body =
+      context.kind === "continuation"
+        ? {
+            answers: context.answers.map((item) => `${item.question}: ${item.answer}`),
+            welcomeChoice: "Mission Continuation",
+            profile: buildLegacyProfile(context.profile, context.answers),
+            atlasProfile: context.profile,
+            interviewAnswers: context.answers,
+            memory,
+            missions,
+            missionHistory,
+            conversationHistory: nextConversationHistory,
+            followUpAnswers: pendingFollowUpAnswers,
+            missionContinuation: {
+              outcome: context.outcome,
+              completedMissions: context.completedMissions.map((mission) => ({
+                title: getMissionTitle(mission),
+                action: mission.action,
+                deliverable: mission.deliverable,
+                doneCriteria: mission.doneCriteria,
+                timeEstimate: mission.timeEstimate,
+              })),
+            },
+          }
+        : {
+            answers: context.answers.map((item) => `${item.question}: ${item.answer}`),
+            welcomeChoice: "Atlas Interview",
+            profile: buildLegacyProfile(context.profile, context.answers),
+            atlasProfile: context.profile,
+            interviewAnswers: context.answers,
+            memory,
+            missions,
+            missionHistory,
+            conversationHistory: nextConversationHistory,
+            followUpAnswers: pendingFollowUpAnswers,
+          };
+
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate Atlas result.");
+    }
+
+    const data = await response.json();
+    return data.result as AtlasApiResult;
+  };
+
   const updateMemory = (nextResult: AtlasApiResult | AtlasResult) => {
     const firstMission = nextResult.todayMission[0];
     const nextMissionTitle = typeof firstMission === "string" ? firstMission : firstMission?.title;
@@ -426,6 +608,7 @@ export default function HomePage() {
     const nextIsReInterview = Boolean(atlasProfile);
 
     window.localStorage.setItem(firstRunStorageKey, "true");
+    resetFollowUpState();
     setInterviewIndex(0);
     setInterviewAnswers([]);
     setIsReInterview(nextIsReInterview);
@@ -550,6 +733,7 @@ export default function HomePage() {
     setInterviewQueue(createInitialInterviewQueue(false));
     setResult(null);
     setLoadingComplete(false);
+    resetFollowUpState();
     setMemory({
       goal: "未設定",
       todayMission: "未設定",
@@ -562,69 +746,79 @@ export default function HomePage() {
     setScreen("firstRun");
   };
 
-  const runAtlas = async (profile: AtlasProfile, answers: InterviewAnswer[]) => {
-    const legacyProfile = buildLegacyProfile(profile, answers);
-    const interviewSummary = answers.map((item) => `${item.question}: ${item.answer}`).join("\n");
-    const profileSummary = [
-      `Profile Type: ${profile.profileType}`,
-      `Accuracy: ${profile.accuracy}%`,
-      `Strength: ${profile.strength.join(" / ")}`,
-      `Weakness: ${profile.weakness.join(" / ")}`,
-      `Recommended Strategy: ${profile.recommendedStrategy.join(" / ")}`,
-    ].join("\n");
-    const nextConversationHistory = [
-      {
-        date: new Date().toLocaleDateString("ja-JP"),
-        content: `Atlas Interview\n${interviewSummary}\n${profileSummary}`,
-      },
-      ...conversationHistory,
-    ].slice(0, 30);
+  const handleAdvanceFollowUp = async (answer: string) => {
+    const currentQuestion = followUpQuestions[followUpAnswers.length] as FollowUpQuestionKey | undefined;
 
-    setConversationHistory(nextConversationHistory);
-    setLoadingComplete(false);
-    setScreen("loading");
+    if (!currentQuestion || !answer || !generationContext) {
+      return;
+    }
+
+    const nextAnswers = [...followUpAnswers, { question: currentQuestion, answer }];
+
+    if (nextAnswers.length < followUpQuestions.length) {
+      setFollowUpAnswers(nextAnswers);
+      return;
+    }
 
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          answers: answers.map((item) => `${item.question}: ${item.answer}`),
-          welcomeChoice: "Atlas Interview",
-          profile: legacyProfile,
-          atlasProfile: profile,
-          interviewAnswers: answers,
-          memory,
-          missions,
-          missionHistory,
-          conversationHistory: nextConversationHistory,
-        }),
-      });
+      const nextResult = await executeAtlasGeneration(generationContext, nextAnswers);
 
-      if (!response.ok) {
-        throw new Error("Failed to generate Atlas result.");
+      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+        requestFollowUp(nextResult, generationContext);
+        return;
       }
 
-      const data = await response.json();
-      const nextResult = data.result as AtlasApiResult;
-      const extractedMissions = extractMissionItems(nextResult);
-      const normalizedResult = {
-        ...nextResult,
-        todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
-      };
+      if (generationContext.kind === "continuation") {
+        const extractedMissions = nextResult.verdict === "GO" ? extractMissionItems(nextResult) : [];
 
-      setMissions(extractedMissions);
-      setResult(normalizedResult);
-      updateMemory(nextResult);
-      updateGhostCounter();
+        if (extractedMissions.length > 0) {
+          setMissions(extractedMissions);
+          setResult({
+            ...nextResult,
+            todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
+          });
+          setAtlasComment(nextResult.atlasComment || atlasComment);
+          updateMemory(nextResult);
+          updateGhostCounter();
+          resetFollowUpState();
+          setScreen("mission");
+          return;
+        }
+
+        resetFollowUpState();
+        setScreen("mission");
+        return;
+      }
+
+      finalizeAtlasResult(nextResult);
+    } catch {
+      setResult(emptyResult);
+      resetFollowUpState();
       setLoadingComplete(true);
       window.setTimeout(() => {
         setScreen("decision");
       }, 600);
+    }
+  };
+
+  const runAtlas = async (profile: AtlasProfile, answers: InterviewAnswer[]) => {
+    try {
+      const context: GenerationContext = {
+        kind: "initial",
+        profile,
+        answers,
+      };
+      const nextResult = await executeAtlasGeneration(context);
+
+      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+        requestFollowUp(nextResult, context);
+        return;
+      }
+
+      finalizeAtlasResult(nextResult);
     } catch {
       setResult(emptyResult);
+      resetFollowUpState();
       setLoadingComplete(true);
       window.setTimeout(() => {
         setScreen("decision");
@@ -642,53 +836,26 @@ export default function HomePage() {
     }
 
     const completedMissions = missions.filter((mission) => mission.done);
-    const nextConversationHistory = [
-      {
-        date: new Date().toLocaleDateString("ja-JP"),
-        content: `Mission Continuation\nOutcome: ${outcome}\nCompleted Missions:\n${completedMissions
-          .map((mission) => getMissionTitle(mission))
-          .join("\n")}`,
-      },
-      ...conversationHistory,
-    ].slice(0, 30);
-
-    setConversationHistory(nextConversationHistory);
 
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          answers: interviewAnswers.map((item) => `${item.question}: ${item.answer}`),
-          welcomeChoice: "Mission Continuation",
-          profile: buildLegacyProfile(atlasProfile, interviewAnswers),
-          atlasProfile,
-          interviewAnswers,
-          memory,
-          missions,
-          missionHistory,
-          conversationHistory: nextConversationHistory,
-          missionContinuation: {
-            outcome,
-            completedMissions: completedMissions.map((mission) => ({
-              title: getMissionTitle(mission),
-              action: mission.action,
-              deliverable: mission.deliverable,
-              doneCriteria: mission.doneCriteria,
-              timeEstimate: mission.timeEstimate,
-            })),
-          },
-        }),
-      });
+      const context: GenerationContext = {
+        kind: "continuation",
+        profile: atlasProfile,
+        answers: interviewAnswers,
+        outcome,
+        completedMissions,
+      };
+      const nextResult = await executeAtlasGeneration(context);
 
-      if (!response.ok) {
-        throw new Error("Failed to continue mission.");
+      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+        requestFollowUp(nextResult, context);
+        return {
+          status: "wait",
+          reason: "判断に必要な情報を追加で確認しています。",
+          resumeCondition: "追加質問への回答後に、そのまま再判断します。",
+        };
       }
 
-      const data = await response.json();
-      const nextResult = data.result as AtlasApiResult;
       const extractedMissions = nextResult.verdict === "GO" ? extractMissionItems(nextResult) : [];
 
       if (extractedMissions.length > 0) {
@@ -700,6 +867,7 @@ export default function HomePage() {
         setAtlasComment(nextResult.atlasComment || atlasComment);
         updateMemory(nextResult);
         updateGhostCounter();
+        resetFollowUpState();
         setScreen("mission");
         return { status: "mission" };
       }
@@ -917,6 +1085,18 @@ export default function HomePage() {
           </div>
         )}
 
+        {screen === "followUp" && (
+          <div className="mx-auto grid w-full max-w-3xl gap-4">
+            <TopActions onDashboard={handleDashboardReturn} onNewConsultation={handleStartInterview} />
+            <FollowUpQuestionPanel
+              questionKey={(followUpQuestions[followUpAnswers.length] as FollowUpQuestionKey | undefined) ?? "goal"}
+              currentIndex={followUpAnswers.length + 1}
+              total={followUpQuestions.length}
+              onSelect={(answer) => void handleAdvanceFollowUp(answer)}
+            />
+          </div>
+        )}
+
         {screen === "mission" && (
           <div className="mx-auto grid w-full max-w-5xl gap-4">
             <TopActions onDashboard={handleDashboardReturn} onNewConsultation={handleStartInterview} />
@@ -1048,6 +1228,45 @@ function TopActions({
         新しい相談
       </button>
     </div>
+  );
+}
+
+function FollowUpQuestionPanel({
+  questionKey,
+  currentIndex,
+  total,
+  onSelect,
+}: {
+  questionKey: FollowUpQuestionKey;
+  currentIndex: number;
+  total: number;
+  onSelect: (answer: string) => void;
+}) {
+  const config = followUpQuestionConfig[questionKey];
+
+  return (
+    <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_54px_rgba(15,23,42,0.07)] sm:p-8">
+      <p className="text-[12px] font-black uppercase tracking-[0.2em] text-indigo-500">Atlas Follow Up</p>
+      <h2 className="mt-3 text-3xl font-black tracking-normal text-slate-950">もう少しだけ教えてください</h2>
+      <p className="mt-3 text-sm font-bold text-slate-500">{`${Math.min(currentIndex, Math.max(total, 1))}/${Math.max(total, 1)}`}</p>
+      <div className="mt-6 rounded-[20px] bg-slate-50 p-5">
+        <p className="text-sm font-black text-slate-950">現在の質問</p>
+        <p className="mt-3 text-xl font-black leading-8 text-slate-900">{config.question}</p>
+      </div>
+      <div className="mt-5 grid gap-3">
+        {config.options.map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => onSelect(option)}
+            className="flex min-h-12 items-center justify-between rounded-[16px] border border-slate-200 bg-white px-4 text-left text-sm font-black text-slate-900 transition duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+          >
+            <span>{option}</span>
+            <ArrowRight className="h-4 w-4 text-slate-400" />
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
