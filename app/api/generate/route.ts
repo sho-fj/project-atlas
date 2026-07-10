@@ -259,14 +259,20 @@ function normalizeResult(
       needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
       followUpQuestions,
     };
-    return applyStageFitGate(payload, applyHardReadinessGate(payload, normalized), currentStage);
+    return applyEvidenceQualityGate(
+      payload,
+      applyStageFitGate(payload, applyHardReadinessGate(payload, normalized), currentStage),
+    );
   } catch {
-    return applyStageFitGate(payload, applyHardReadinessGate(payload, {
-      ...defaultResult,
-      salesSimulation: emptySalesSimulation,
-      decisionLog: fallbackDecisionLog,
-      atlasComment: fallbackAtlasComment,
-    }), currentStage);
+    return applyEvidenceQualityGate(
+      payload,
+      applyStageFitGate(payload, applyHardReadinessGate(payload, {
+        ...defaultResult,
+        salesSimulation: emptySalesSimulation,
+        decisionLog: fallbackDecisionLog,
+        atlasComment: fallbackAtlasComment,
+      }), currentStage),
+    );
   }
 }
 
@@ -765,6 +771,127 @@ function applyStageFitGate(payload: GeneratePayload, result: AtlasResult, curren
     reasons: [`現在段階 ${currentStage} より先の行動が含まれていたため、段階に合うMissionへ置き換えました。`, ...result.reasons].slice(0, 5),
     todayMission: safeMission.length > 0 ? safeMission : result.todayMission,
     nextStep: safeMission[0]?.title ?? result.nextStep,
+  };
+}
+
+function normalizeEvidenceComparable(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[ 　\t\r\n]+/g, "")
+    .replace(/[。．、，,!.！?？ー\-:：]/g, "");
+}
+
+function evidenceHasKeywordSupport(
+  values: string[],
+  keywords: string[],
+  excludedPatterns: RegExp[] = [],
+) {
+  return values.some((value) => {
+    const normalized = normalizeEvidenceComparable(value);
+    if (excludedPatterns.some((pattern) => pattern.test(normalized))) {
+      return false;
+    }
+    return keywords.some((keyword) => normalized.includes(normalizeEvidenceComparable(keyword)));
+  });
+}
+
+function sanitizeStrengthAssertion(text: string, evidence: EvidenceContext) {
+  const strengthKeywords = ["仮説", "営業", "分析", "設計", "開発", "制作", "提案", "整理", "発信", "相談", "販売", "スキル", "経験"];
+  const negativeStrengthPatterns = [/苦手/, /できない/, /経験がない/, /自信がない/, /未経験/, /分からない/, /わからない/];
+  if (evidenceHasKeywordSupport(evidence.statedFacts, strengthKeywords, negativeStrengthPatterns)) {
+    return text;
+  }
+
+  return text
+    .replace(/あなたの強みである([^。、「」]+?)を活かす/g, "今ある情報を整理して$1を試す")
+    .replace(/あなたは([^。、「」]+?)が得意/g, "$1をどう活かせるか確認する")
+    .replace(/([^。、「」]+?)のスキルを活かせる/g, "$1をどう活かせるか確認する")
+    .replace(/強みを活かす/g, "今ある情報を整理して進める");
+}
+
+function sanitizeObservedResultAssertion(text: string, evidence: EvidenceContext) {
+  const resultKeywords = ["聞いた", "返信", "反応", "売れ", "販売", "受注", "契約", "申し込み", "購入", "相談"];
+  const notExecutedPatterns = [/やりたい/, /予定/, /これから/, /試したい/, /まだやっていない/, /未実行/];
+  if (evidenceHasKeywordSupport(evidence.observedResults, resultKeywords, notExecutedPatterns)) {
+    return text;
+  }
+
+  return text
+    .replace(/(\d+)人に聞いた/g, "$1人に聞く")
+    .replace(/顧客から反応があった/g, "顧客から反応があるか確認する")
+    .replace(/販売実績がある/g, "販売実績になる条件を確認する")
+    .replace(/(\d+)件売れた/g, "$1件売れるか検証する")
+    .replace(/受注した/g, "受注できるか検証する")
+    .replace(/返信が来た/g, "返信が来るか確認する");
+}
+
+function sanitizeNeedAssertion(text: string, evidence: EvidenceContext) {
+  const needKeywords = ["不安", "悩み", "ニーズ", "需要", "求め", "課題", "反応", "返信"];
+  const contraryNeedPatterns = [/不要/, /興味を示されなかった/, /反応なし/, /売れなかった/, /断られた/];
+  if (evidenceHasKeywordSupport(evidence.observedResults, needKeywords, contraryNeedPatterns)) {
+    return text;
+  }
+
+  return text
+    .replace(/顧客は([^。、「」]+?)に悩んでいる/g, "顧客が$1に悩んでいるか確認する")
+    .replace(/([^。、「」]+?)のニーズがある/g, "$1のニーズがあるか確認する")
+    .replace(/市場で求められている/g, "市場で求められているか確認する")
+    .replace(/40代会社員は独立に不安を感じている/g, "40代会社員が独立にどんな不安を感じるか確認する")
+    .replace(/このニーズがあります/g, "このニーズがあるか確認します");
+}
+
+function sanitizeDemandAssertion(text: string, evidence: EvidenceContext) {
+  const demandKeywords = ["売れ", "販売", "受注", "契約", "購入", "反応", "返信", "申し込み"];
+  const contraryDemandPatterns = [/売れなかった/, /反応がなかった/, /反応なし/, /不要/, /断られた/, /興味を示されなかった/];
+  if (evidenceHasKeywordSupport(evidence.observedResults, demandKeywords, contraryDemandPatterns)) {
+    return text;
+  }
+
+  return text
+    .replace(/売れる(?!か|条件|可能性)/g, "売れるか検証する")
+    .replace(/需要がある/g, "需要があるか確かめる")
+    .replace(/成功する/g, "成功する条件を確認する")
+    .replace(/収益化できる/g, "収益化できる条件を確認する")
+    .replace(/顧客が集まる/g, "顧客が集まるか確認する");
+}
+
+function sanitizeEvidenceQualityText(text: string, evidence: EvidenceContext) {
+  let sanitized = text;
+  sanitized = sanitizeStrengthAssertion(sanitized, evidence);
+  sanitized = sanitizeObservedResultAssertion(sanitized, evidence);
+  sanitized = sanitizeNeedAssertion(sanitized, evidence);
+  sanitized = sanitizeDemandAssertion(sanitized, evidence);
+  return sanitized;
+}
+
+function applyEvidenceQualityGate(payload: GeneratePayload, result: AtlasResult): AtlasResult {
+  if (result.needsMoreInfo) {
+    return result;
+  }
+
+  const evidence = collectStructuredEvidence(payload);
+
+  return {
+    ...result,
+    conclusion: sanitizeEvidenceQualityText(result.conclusion, evidence),
+    reasons: result.reasons.map((reason) => sanitizeEvidenceQualityText(reason, evidence)),
+    decisionLog: result.decisionLog.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    todayPlan: result.todayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    sevenDayPlan: result.sevenDayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    ninetyDayPlan: result.ninetyDayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    dontDo: result.dontDo.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    todayMission: result.todayMission.map((mission) => ({
+      ...mission,
+      title: sanitizeEvidenceQualityText(mission.title, evidence),
+      action: mission.action ? sanitizeEvidenceQualityText(mission.action, evidence) : undefined,
+      deliverable: mission.deliverable ? sanitizeEvidenceQualityText(mission.deliverable, evidence) : undefined,
+      doneCriteria: mission.doneCriteria ? sanitizeEvidenceQualityText(mission.doneCriteria, evidence) : undefined,
+      example: mission.example ? sanitizeEvidenceQualityText(mission.example, evidence) : undefined,
+    })),
+    atlasComment: sanitizeEvidenceQualityText(result.atlasComment, evidence),
+    atlasOneLine: sanitizeEvidenceQualityText(result.atlasOneLine, evidence),
+    nextStep: sanitizeEvidenceQualityText(result.nextStep, evidence),
   };
 }
 
