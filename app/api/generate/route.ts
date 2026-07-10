@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+﻿import { GoogleGenAI } from "@google/genai";
 
 type Verdict = "GO" | "HOLD" | "STOP";
 
@@ -424,6 +424,89 @@ function hasSubstance(value?: string) {
   );
 }
 
+type EvidenceContext = {
+  statedFacts: string[];
+  statedIntent: string[];
+  observedResults: string[];
+  unverifiedHypotheses: string[];
+  availableTime: string;
+  availableBudget: string;
+  goal: string;
+  customerProblem: string;
+  offerOrStrength: string;
+  answeredFollowUpKeys: ReadinessNeed["key"][];
+};
+
+function dedupeEvidence(values: string[]) {
+  const unique = new Set<string>();
+
+  values.forEach((value) => {
+    const normalized = value.trim();
+    if (hasSubstance(normalized)) {
+      unique.add(normalized);
+    }
+  });
+
+  return [...unique];
+}
+
+function extractAnswerValue(entry: string) {
+  const separatorIndex = entry.indexOf(":");
+  return separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : entry.trim();
+}
+
+function collectStructuredEvidence(payload: GeneratePayload): EvidenceContext {
+  const answerValuesFromLegacyAnswers = (payload.answers ?? []).map((entry) => extractAnswerValue(entry));
+  const interviewAnswers = payload.interviewAnswers ?? [];
+  const followUpAnswers = payload.followUpAnswers ?? [];
+  const missionHistory = payload.missionHistory ?? [];
+  const statedFacts = dedupeEvidence([
+    ...answerValuesFromLegacyAnswers,
+    ...interviewAnswers
+      .filter((entry) => ["weekdayTime", "reTime", "initialCost", "budget", "reBudget", "value", "offer", "strength", "experience", "reOffer"].includes(entry.questionId))
+      .map((entry) => entry.answer),
+    ...followUpAnswers
+      .filter((entry) => /経験|使える時間|予算|使える金額|提供できる|できること|得意|スキル|価値|実績/.test(entry.question))
+      .map((entry) => entry.answer),
+  ]);
+  const intentCandidates = dedupeEvidence([
+    payload.welcomeChoice ?? "",
+    ...interviewAnswers
+      .filter((entry) => ["revenueTarget", "reMoney", "priority", "rePriority", "who", "customer", "problem", "customerProblem", "reCustomer"].includes(entry.questionId))
+      .map((entry) => entry.answer),
+    ...followUpAnswers
+      .filter((entry) => !/経験|使える時間|予算|使える金額|提供できる|できること|得意|スキル|価値|実績/.test(entry.question))
+      .map((entry) => entry.answer),
+  ]);
+  const observedResults = dedupeEvidence([
+    ...missionHistory.flatMap((entry) => [entry.note, `${entry.status}${entry.note ? `: ${entry.note}` : ""}`]),
+    ...(payload.missionContinuation?.outcome ? [payload.missionContinuation.outcome] : []),
+  ]);
+  const unverifiedHypotheses = dedupeEvidence(
+    intentCandidates.filter((entry) => /はず|かもしれない|需要|ニーズ|売れる|刺さる|悩み/.test(entry)),
+  );
+
+  return {
+    statedFacts,
+    statedIntent: dedupeEvidence(intentCandidates.filter((entry) => !unverifiedHypotheses.includes(entry))),
+    observedResults,
+    unverifiedHypotheses,
+    availableTime: interviewAnswers.find((entry) => ["weekdayTime", "reTime"].includes(entry.questionId))?.answer ?? "",
+    availableBudget: interviewAnswers.find((entry) => ["initialCost", "budget", "reBudget"].includes(entry.questionId))?.answer ?? "",
+    goal: interviewAnswers.find((entry) => ["revenueTarget", "reMoney", "priority", "rePriority"].includes(entry.questionId))?.answer ?? "",
+    customerProblem:
+      interviewAnswers.find((entry) => ["who", "customer", "problem", "customerProblem", "reCustomer"].includes(entry.questionId))?.answer ?? "",
+    offerOrStrength:
+      followUpAnswers.find((entry) => hasSubstance(entry.answer) && /提供|できる|得意|経験|強み|スキル|価値/.test(entry.question))
+        ?.answer ??
+      interviewAnswers.find((entry) => ["value", "offer", "strength", "experience", "reOffer"].includes(entry.questionId))?.answer ??
+      "",
+    answeredFollowUpKeys: followUpAnswers
+      .map((entry) => entry.question as ReadinessNeed["key"])
+      .filter((key): key is ReadinessNeed["key"] => key in followUpQuestionConfig),
+  };
+}
+
 function collectUserEvidence(payload: GeneratePayload) {
   const answerValuesFromLegacyAnswers = (payload.answers ?? []).map((entry) => {
     const separatorIndex = entry.indexOf(":");
@@ -461,15 +544,16 @@ function collectUserEvidence(payload: GeneratePayload) {
 }
 
 function deriveCurrentStage(payload: GeneratePayload): CurrentStage {
-  const evidence = collectUserEvidence(payload);
+  const evidence = collectStructuredEvidence(payload);
   const userFacts = [
     evidence.goal,
     evidence.customerProblem,
     evidence.offerOrStrength,
     evidence.availableTime,
     evidence.availableBudget,
-    ...evidence.answerValues,
-    ...evidence.missionResultValues,
+    ...evidence.statedFacts,
+    ...evidence.statedIntent,
+    ...evidence.observedResults,
   ]
     .filter(hasSubstance)
     .join(" ")
@@ -500,7 +584,7 @@ function deriveCurrentStage(payload: GeneratePayload): CurrentStage {
     return "defining";
   }
 
-  if (hasSubstance(evidence.goal) || hasSubstance(evidence.availableTime) || evidence.answerValues.length > 0) {
+  if (hasSubstance(evidence.goal) || hasSubstance(evidence.availableTime) || evidence.statedFacts.length > 0) {
     return "exploring";
   }
 
@@ -515,13 +599,13 @@ function containsConcreteOfferOrStrength(values: string[]) {
 }
 
 function detectReadinessNeeds(payload: GeneratePayload, result: AtlasResult): ReadinessNeed[] {
-  const evidence = collectUserEvidence(payload);
+  const evidence = collectStructuredEvidence(payload);
   const hasGoal = hasSubstance(evidence.goal);
   const hasCustomerProblem = hasSubstance(evidence.customerProblem);
   const hasOfferOrStrength = containsConcreteOfferOrStrength([
     evidence.offerOrStrength,
-    ...evidence.answerValues,
-    ...evidence.missionResultValues,
+    ...evidence.statedFacts,
+    ...evidence.observedResults,
   ]);
   const hasAvailableTime = hasSubstance(evidence.availableTime);
   const budgetRequiredByMission = result.todayMission.some((mission) =>
@@ -840,6 +924,7 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
   const missions = payload.missions ?? [];
   const conversationHistory = payload.conversationHistory ?? [];
   const missionContinuation = payload.missionContinuation;
+  const evidence = collectStructuredEvidence(payload);
   const summary = [payload.welcomeChoice, ...(payload.answers ?? []).filter(Boolean)].filter(Boolean).join("\n");
   const currentStateMap = buildCurrentStateMap(payload, currentStage);
   const exampleFormatting = [
@@ -854,6 +939,8 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
     "Mission Readiness Rules:",
     "- Before creating todayMission, inspect Atlas Profile, Interview Answers, Follow Up Answers, Mission History, completed Missions, Memory, Summary, and Conversation History.",
     "- Build and review the Current State Map first, then use it as the main reference for verdict and Mission generation.",
+    "- Use Structured Evidence Context as the only source for factual assertions about the user's strengths, actions, results, customer needs, market demand, or sales proof.",
+    "- Context such as Profile, Summary, Memory, Conversation History, and Active Missions may be used for continuity and background understanding, but not as proof of verified facts.",
     "- Decide todayMission in this order: 1) confirm what the user has already decided, 2) identify prerequisites for the next action, 3) if prerequisites are missing, assign the immediately previous prerequisite-building Mission, 4) only if prerequisites are ready, assign the smallest execution Mission.",
     "- The Mission must be doable today, preferably within 60 minutes, low risk, minimal in scope, and must not skip the previous stage.",
     "- Do not assign company sales outreach unless target customer, customer problem, and offered value are already clear.",
@@ -863,6 +950,12 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
     "- Do not assign advertising before a small response test has been done.",
     "- Do not assign incorporation, hiring, tooling purchases, or other large investments before initial revenue validation.",
     "- If the user's current position is unclear, prefer a prerequisite Mission such as listing three values they can provide, choosing one smallest testable offer, or tentatively deciding whose problem they will solve.",
+    "- statedFacts may be used as user facts.",
+    "- statedIntent must be treated only as hopes, goals, plans, or preferences, not as completed action.",
+    "- observedResults may be used as actual actions or outcomes.",
+    "- unverifiedHypotheses must always be treated as unverified hypotheses to test.",
+    "- Never assert a user strength unless it is supported by Structured Evidence Context.",
+    "- Never treat hopes as achievements, AI-generated customer problems as real customer needs, or unverified ideas as proven demand.",
     "- Preserve the existing Mission detail structure: title, action, deliverable, doneCriteria, timeEstimate, example.",
   ].join("\n");
   const missionContinuationRules = missionContinuation
@@ -870,6 +963,7 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
         "Mission Continuation Rules:",
         "- This request is after Mission completion. Do not require a full Interview and do not ask interview questions.",
         "- Rejudge the user's current position using Mission Outcome, Completed Mission, Atlas Profile, Follow Up Answers, Mission History, and Conversation History.",
+        "- In continuation mode as well, use Structured Evidence Context as the only source for factual assertions about strengths, actions, results, customer needs, demand, or traction.",
         "- Rebuild the Current State Map from the latest evidence before deciding GO or HOLD.",
         "- If the user can move now, return verdict GO and create the next smallest Mission in todayMission using the existing fields: title, action, deliverable, doneCriteria, timeEstimate, example.",
         "- If the user should not move now, return verdict HOLD, return todayMission as an empty array, set conclusion to a short waiting judgment, put the reason in reasons[0], and put the restart condition in nextStep.",
@@ -877,6 +971,18 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
         "- For outcome 'うまくいかなかった' or '別の発見があった', use the result as evidence and choose either a smaller correction Mission or HOLD if more observation is needed.",
       ].join("\n")
     : "";
+  const evidenceRules = [
+    "Structured Evidence Context:",
+    "- Use the sections below as the boundary for factual claims.",
+    "- statedFacts: may be used as user facts.",
+    "- statedIntent: treat only as hope, goal, or plan. Do not rewrite as completed action or proven result.",
+    "- observedResults: may be used as actual action or outcome.",
+    "- unverifiedHypotheses: always present as unverified assumptions to test.",
+    "- Forbidden: unsupported 'your strength is ...' claims.",
+    "- Forbidden: treating goals as traction or execution.",
+    "- Forbidden: treating AI-generated customer problems, summaries, memory text, or mission text as validated customer needs.",
+    "- Forbidden: saying demand exists, it will sell, or the market wants it without Structured Evidence Context support.",
+  ].join("\n");
 
   return `${exampleFormatting}
 
@@ -939,6 +1045,21 @@ ${missionReadinessRules}
 ${missionContinuationRules ? `\n${missionContinuationRules}` : ""}
 
 ${currentStateMap}
+
+${evidenceRules}
+
+Evidence Context:
+statedFacts:
+${evidence.statedFacts.length > 0 ? evidence.statedFacts.join("\n") : "unknown"}
+
+statedIntent:
+${evidence.statedIntent.length > 0 ? evidence.statedIntent.join("\n") : "unknown"}
+
+observedResults:
+${evidence.observedResults.length > 0 ? evidence.observedResults.join("\n") : "unknown"}
+
+unverifiedHypotheses:
+${evidence.unverifiedHypotheses.length > 0 ? evidence.unverifiedHypotheses.join("\n") : "unknown"}
 
 Interview Answers:
 ${interviewAnswers.length > 0 ? interviewAnswers.map((entry) => `${entry.question}: ${entry.answer}`).join("\n") : "未登録"}
