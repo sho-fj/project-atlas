@@ -80,7 +80,7 @@ type AtlasResult = {
   atlasOneLine: string;
   nextStep: string;
   needsMoreInfo: boolean;
-  followUpQuestions: string[];
+  followUpQuestions: FollowUpQuestion[];
 };
 
 type AtlasApiResult = Omit<AtlasResult, "todayMission"> & {
@@ -147,6 +147,11 @@ type FollowUpAnswer = {
 
 type FollowUpQuestionKey = "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
 
+type FollowUpQuestion = {
+  key: string;
+  question: string;
+};
+
 const followUpQuestionConfig: Record<
   FollowUpQuestionKey,
   {
@@ -175,6 +180,16 @@ const followUpQuestionConfig: Record<
     options: ["0円", "1万円まで", "5万円まで", "それ以上"],
   },
 };
+
+function isFollowUpQuestionKey(value: string): value is FollowUpQuestionKey {
+  return value in followUpQuestionConfig;
+}
+
+function hasConfiguredFollowUpQuestions(questions: FollowUpQuestion[]) {
+  return questions.length > 0 && questions.every((question) =>
+    isFollowUpQuestionKey(question.key) && Boolean(question.question.trim()),
+  );
+}
 
 type GenerationContext =
   | {
@@ -475,7 +490,7 @@ export default function HomePage() {
   const [showGhostEvent, setShowGhostEvent] = useState(false);
   const [showMissionComplete, setShowMissionComplete] = useState(false);
   const [atlasComment, setAtlasComment] = useState("Profile生成後、戦略を作成する。");
-  const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [followUpQuestions, setFollowUpQuestions] = useState<FollowUpQuestion[]>([]);
   const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswer[]>([]);
   const [generationContext, setGenerationContext] = useState<GenerationContext | null>(null);
 
@@ -856,13 +871,13 @@ export default function HomePage() {
   };
 
   const handleAdvanceFollowUp = async (answer: string) => {
-    const currentQuestion = followUpQuestions[followUpAnswers.length] as FollowUpQuestionKey | undefined;
+    const currentQuestion = followUpQuestions[followUpAnswers.length];
 
     if (!currentQuestion || !answer || !generationContext) {
       return;
     }
 
-    const nextAnswers = [...followUpAnswers, { question: currentQuestion, answer }];
+    const nextAnswers = [...followUpAnswers, { question: currentQuestion.key, answer }];
 
     if (nextAnswers.length < followUpQuestions.length) {
       setFollowUpAnswers(nextAnswers);
@@ -872,7 +887,7 @@ export default function HomePage() {
     try {
       const nextResult = await executeAtlasGeneration(generationContext, nextAnswers);
 
-      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+      if (nextResult.needsMoreInfo && hasConfiguredFollowUpQuestions(nextResult.followUpQuestions)) {
         requestFollowUp(nextResult, generationContext);
         return;
       }
@@ -926,7 +941,7 @@ export default function HomePage() {
       };
       const nextResult = await executeAtlasGeneration(context);
 
-      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+      if (nextResult.needsMoreInfo && hasConfiguredFollowUpQuestions(nextResult.followUpQuestions)) {
         requestFollowUp(nextResult, context);
         return;
       }
@@ -963,7 +978,7 @@ export default function HomePage() {
       };
       const nextResult = await executeAtlasGeneration(context);
 
-      if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+      if (nextResult.needsMoreInfo && hasConfiguredFollowUpQuestions(nextResult.followUpQuestions)) {
         setContinuationWait(null);
         requestFollowUp(nextResult, context);
         return {
@@ -1055,6 +1070,7 @@ export default function HomePage() {
     });
   };
   const isFirstRunScreen = screen === "firstRun";
+  const activeFollowUpQuestion = followUpQuestions[followUpAnswers.length];
 
   return (
     <div className="atlas-page">
@@ -1210,11 +1226,11 @@ export default function HomePage() {
           </div>
         )}
 
-        {screen === "followUp" && (
+        {screen === "followUp" && activeFollowUpQuestion && (
           <div className="mx-auto grid w-full max-w-3xl gap-4">
             <TopActions onDashboard={handleDashboardReturn} onNewConsultation={handleStartInterview} />
             <FollowUpQuestionPanel
-              questionKey={(followUpQuestions[followUpAnswers.length] as FollowUpQuestionKey | undefined) ?? "goal"}
+              question={activeFollowUpQuestion}
               currentIndex={followUpAnswers.length + 1}
               total={followUpQuestions.length}
               onSelect={(answer) => void handleAdvanceFollowUp(answer)}
@@ -1359,17 +1375,21 @@ function TopActions({
 }
 
 function FollowUpQuestionPanel({
-  questionKey,
+  question,
   currentIndex,
   total,
   onSelect,
 }: {
-  questionKey: FollowUpQuestionKey;
+  question: FollowUpQuestion;
   currentIndex: number;
   total: number;
   onSelect: (answer: string) => void;
 }) {
-  const config = followUpQuestionConfig[questionKey];
+  if (!isFollowUpQuestionKey(question.key) || !question.question.trim()) {
+    return null;
+  }
+
+  const config = followUpQuestionConfig[question.key];
 
   return (
     <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_18px_54px_rgba(15,23,42,0.07)] sm:p-8">
@@ -1378,7 +1398,7 @@ function FollowUpQuestionPanel({
       <p className="mt-3 text-sm font-bold text-slate-500">{`${Math.min(currentIndex, Math.max(total, 1))}/${Math.max(total, 1)}`}</p>
       <div className="mt-6 rounded-[20px] bg-slate-50 p-5">
         <p className="text-sm font-black text-slate-950">現在の質問</p>
-        <p className="mt-3 text-xl font-black leading-8 text-slate-900">{config.question}</p>
+        <p className="mt-3 text-xl font-black leading-8 text-slate-900">{question.question}</p>
       </div>
       <div className="mt-5 grid gap-3">
         {config.options.map((option) => (

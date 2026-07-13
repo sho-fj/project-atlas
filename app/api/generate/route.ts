@@ -45,7 +45,7 @@ type AtlasResult = {
   atlasOneLine: string;
   nextStep: string;
   needsMoreInfo: boolean;
-  followUpQuestions: string[];
+  followUpQuestions: FollowUpQuestion[];
 };
 
 type InterviewAnswerInput = {
@@ -69,8 +69,15 @@ type UserArtifactInput = {
   sharedAt: string;
 };
 
+type FollowUpQuestionKey = "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
+
+type FollowUpQuestion = {
+  key: FollowUpQuestionKey;
+  question: string;
+};
+
 type ReadinessNeed = {
-  key: "goal" | "customerProblem" | "offerOrStrength" | "availableTime" | "availableBudget";
+  key: FollowUpQuestionKey;
   question: string;
 };
 
@@ -105,7 +112,7 @@ const followUpQuestionConfig = {
     question: "最初に使える費用はどれくらいですか？",
     options: ["0円", "1万円まで", "5万円まで", "それ以上"],
   },
-} satisfies Record<ReadinessNeed["key"], { question: string; options: string[] }>;
+} satisfies Record<FollowUpQuestionKey, { question: string; options: string[] }>;
 
 type AtlasProfileInput = {
   profileType: string;
@@ -261,12 +268,12 @@ function normalizeResult(
       todayMission?: string | string[] | Partial<MissionDraft>[];
       dontDo?: string | string[];
       decisionLog?: string | string[];
-      followUpQuestions?: string | string[];
+      followUpQuestions?: unknown;
     };
     const decisionLog = normalizeStringArray(parsed.decisionLog, fallbackDecisionLog);
     const todayMission = normalizeMissionArray(parsed.todayMission, defaultResult.todayMission);
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
-    const followUpQuestions = normalizeStringArray(parsed.followUpQuestions, []).slice(0, 3);
+    const followUpQuestions = normalizeFollowUpQuestions(parsed.followUpQuestions);
     const normalizedRevenueHypothesis = parsed.needsMoreInfo === true
       ? null
       : normalizeRevenueHypothesis(parsed.revenueHypothesis, currentStage);
@@ -585,6 +592,50 @@ function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "d
   }
 
   return stripMarkdown("朝の作業手順を1枚に整理する\n問い合わせ内容を3分類する\n週次の確認項目を共有する");
+}
+
+function isFollowUpQuestionKey(value: unknown): value is FollowUpQuestionKey {
+  return typeof value === "string" && value in followUpQuestionConfig;
+}
+
+function normalizeFollowUpQuestions(value: unknown): FollowUpQuestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item): FollowUpQuestion | null => {
+      if (typeof item === "string") {
+        if (isFollowUpQuestionKey(item)) {
+          return { key: item, question: followUpQuestionConfig[item].question };
+        }
+
+        const matchingKey = (Object.keys(followUpQuestionConfig) as FollowUpQuestionKey[])
+          .find((key) => followUpQuestionConfig[key].question === item.trim());
+        return matchingKey
+          ? { key: matchingKey, question: followUpQuestionConfig[matchingKey].question }
+          : null;
+      }
+
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+
+      const candidate = item as { key?: unknown; question?: unknown };
+      const candidateKey = typeof candidate.key === "string" ? candidate.key : "";
+      const hasKnownKey = isFollowUpQuestionKey(candidateKey);
+      if (!hasKnownKey || typeof candidate.question !== "string" || !candidate.question.trim()) {
+        return null;
+      }
+
+      return {
+        key: candidateKey,
+        question: candidate.question.trim(),
+      };
+    })
+    .filter((question): question is FollowUpQuestion => Boolean(question))
+    .filter((question, index, questions) => questions.findIndex((candidate) => candidate.key === question.key) === index)
+    .slice(0, 3);
 }
 
 function isProposalOrSendingMission(mission: Pick<MissionDraft, "title" | "action" | "deliverable" | "doneCriteria">) {
@@ -1311,7 +1362,10 @@ function applyHardReadinessGate(payload: GeneratePayload, result: AtlasResult) {
     return result;
   }
 
-  const followUpQuestions = needs.slice(0, 3).map((need) => need.key);
+  const followUpQuestions = needs.slice(0, 3).map((need) => ({
+    key: need.key,
+    question: followUpQuestionConfig[need.key].question,
+  }));
   const discoveryMission = followUpQuestions.length === 0 ? buildDiscoveryMission(needs.map((need) => need.key)) : [];
 
   return {
@@ -1322,7 +1376,7 @@ function applyHardReadinessGate(payload: GeneratePayload, result: AtlasResult) {
         ? "追加情報を確認してから次のMissionを判断します。"
         : "不明な項目を見つけるための小さなDiscovery Missionから始めます。",
     reasons: ["次のMission判断に必要な情報がまだ不足しています。", ...result.reasons].slice(0, 5),
-    nextStep: discoveryMission[0]?.title ?? followUpQuestions[0] ?? result.nextStep,
+    nextStep: discoveryMission[0]?.title ?? followUpQuestions[0]?.question ?? result.nextStep,
     needsMoreInfo: followUpQuestions.length > 0,
     followUpQuestions,
     todayMission: followUpQuestions.length > 0 ? [] : discoveryMission.length > 0 ? discoveryMission : result.todayMission,
@@ -1577,7 +1631,7 @@ JSON:
   "atlasOneLine": "短い一言",
   "nextStep": "次の一手",
   "needsMoreInfo": false,
-  "followUpQuestions": ["短く具体的な質問1", "短く具体的な質問2"]
+  "followUpQuestions": [{ "key": "goal", "question": "何を目指していますか？" }]
 }
 
 判断ルール:
@@ -1608,6 +1662,7 @@ JSON:
 - needsMoreInfoは、現在の判断を大きく左右する重要情報が不足している時だけtrueにする
 - 情報が十分なら needsMoreInfo は false、followUpQuestions は [] にする
 - followUpQuestionsは最大3問
+- followUpQuestionsの各項目は { key, question } のオブジェクトにする。keyは goal / customerProblem / offerOrStrength / availableTime / availableBudget のいずれかだけを使う
 - 質問は、そのユーザーの不足情報だけを聞く。既にProfile、Interview、History、Memoryで分かっていることは聞かない
 - 1問は短く、答えやすく、長文入力を前提にしない
 - 一般論の質問や広すぎる質問はしない
