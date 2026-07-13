@@ -11,6 +11,21 @@ type MissionDraft = {
   example?: string;
 };
 
+type RevenueHypothesis = {
+  buyer: string;
+  problem: string;
+  offer: string;
+  paidReason: string;
+  priceHypothesis: string;
+  firstCustomerPath: string;
+  requiredTime: string;
+  requiredBudget: string;
+  smallestValidation: string;
+  successCondition: string;
+  failureCondition: string;
+  nextDecision: string;
+};
+
 type AtlasResult = {
   verdict: Verdict;
   conclusion: string;
@@ -238,6 +253,7 @@ function normalizeResult(
 
   try {
     const parsed = JSON.parse(cleaned) as Partial<AtlasResult> & {
+      revenueHypothesis?: RevenueHypothesis | null;
       salesSimulation?: Partial<AtlasResult["salesSimulation"]>;
       todayMission?: string | string[] | Partial<MissionDraft>[];
       dontDo?: string | string[];
@@ -248,8 +264,11 @@ function normalizeResult(
     const todayMission = normalizeMissionArray(parsed.todayMission, defaultResult.todayMission);
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
     const followUpQuestions = normalizeStringArray(parsed.followUpQuestions, []).slice(0, 3);
+    const revenueHypothesis = parsed.needsMoreInfo === true
+      ? null
+      : normalizeRevenueHypothesis(parsed.revenueHypothesis, currentStage);
 
-    const normalized = {
+    const normalized = projectRevenueHypothesis({
       verdict: normalizeVerdict(parsed.verdict),
       conclusion: parsed.conclusion?.trim() || defaultResult.conclusion,
       reasons: normalizeStringArray(parsed.reasons, defaultResult.reasons).slice(0, 5),
@@ -269,7 +288,7 @@ function normalizeResult(
       nextStep: parsed.nextStep?.trim() || defaultResult.nextStep,
       needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
       followUpQuestions,
-    };
+    }, revenueHypothesis);
     return applyEvidenceQualityGate(
       payload,
       applyStageFitGate(payload, applyHardReadinessGate(payload, normalized), currentStage),
@@ -285,6 +304,80 @@ function normalizeResult(
       }), currentStage),
     );
   }
+}
+
+function normalizeRevenueHypothesis(value: unknown, currentStage: CurrentStage): RevenueHypothesis | null {
+  const revenueStages: CurrentStage[] = ["validating", "selling", "repeating", "optimizing", "scaling"];
+  if (!revenueStages.includes(currentStage) || !value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const candidate = value as Partial<Record<keyof RevenueHypothesis, unknown>>;
+  const text = (field: keyof RevenueHypothesis) => typeof candidate[field] === "string" ? candidate[field].trim() : "";
+  const buyer = text("buyer");
+  const problem = text("problem");
+  const offer = text("offer");
+  const paidReason = text("paidReason");
+  const priceHypothesis = text("priceHypothesis");
+  const firstCustomerPath = text("firstCustomerPath");
+  const requiredTime = text("requiredTime");
+  const requiredBudget = text("requiredBudget");
+  const smallestValidation = text("smallestValidation");
+  const successCondition = text("successCondition");
+  const failureCondition = text("failureCondition");
+  const nextDecision = text("nextDecision");
+
+  if (![buyer, problem, offer, paidReason, priceHypothesis, firstCustomerPath, requiredTime, requiredBudget, smallestValidation, successCondition, failureCondition, nextDecision].every(Boolean)) {
+    return null;
+  }
+
+  return {
+    buyer,
+    problem,
+    offer,
+    paidReason,
+    priceHypothesis,
+    firstCustomerPath,
+    requiredTime,
+    requiredBudget,
+    smallestValidation,
+    successCondition,
+    failureCondition,
+    nextDecision,
+  };
+}
+
+function projectRevenueHypothesis(result: AtlasResult, revenueHypothesis: RevenueHypothesis | null): AtlasResult {
+  if (!revenueHypothesis) {
+    return result;
+  }
+
+  return {
+    ...result,
+    conclusion: `買い手候補: ${revenueHypothesis.buyer}。問題仮説: ${revenueHypothesis.problem}。提供: ${revenueHypothesis.offer}。有料理由: ${revenueHypothesis.paidReason}。`,
+    salesSimulation: {
+      ...result.salesSimulation,
+      price: revenueHypothesis.priceHypothesis,
+    },
+    todayPlan: [
+      `初回販売候補への経路: ${revenueHypothesis.firstCustomerPath}`,
+      `必要時間: ${revenueHypothesis.requiredTime}`,
+      `必要費用: ${revenueHypothesis.requiredBudget}`,
+    ],
+    todayMission: [{
+      title: "最小検証を実行する",
+      action: revenueHypothesis.smallestValidation,
+      deliverable: "最小検証の記録",
+      doneCriteria: "検証内容と相手の反応を記録できている",
+      timeEstimate: revenueHypothesis.requiredTime,
+      example: revenueHypothesis.smallestValidation,
+    }],
+    reasons: [
+      `成功条件: ${revenueHypothesis.successCondition}`,
+      `失敗条件: ${revenueHypothesis.failureCondition}`,
+    ],
+    nextStep: revenueHypothesis.nextDecision,
+  };
 }
 
 function normalizeVerdict(value: unknown): Verdict {
@@ -971,10 +1064,12 @@ function sanitizeDemandAssertion(text: string, evidence: EvidenceContext) {
   }
 
   return text
+    .replace(/儲かる/g, "支払い意思を検証する")
     .replace(/売れる(?!か|条件|可能性)/g, "売れるか検証する")
     .replace(/需要がある/g, "需要があるか確かめる")
     .replace(/成功する/g, "成功する条件を確認する")
     .replace(/収益化できる/g, "収益化できる条件を確認する")
+    .replace(/月収\s*[0-9０-９,，万円円]+を達成できる/g, "支払い意思を検証する")
     .replace(/顧客が集まる/g, "顧客が集まるか確認する");
 }
 
@@ -1002,6 +1097,11 @@ function applyEvidenceQualityGate(payload: GeneratePayload, result: AtlasResult)
     todayPlan: result.todayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
     sevenDayPlan: result.sevenDayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
     ninetyDayPlan: result.ninetyDayPlan.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
+    salesSimulation: {
+      price: sanitizeEvidenceQualityText(result.salesSimulation.price, evidence),
+      requiredSales: sanitizeEvidenceQualityText(result.salesSimulation.requiredSales, evidence),
+      targetProfit: sanitizeEvidenceQualityText(result.salesSimulation.targetProfit, evidence),
+    },
     dontDo: result.dontDo.map((entry) => sanitizeEvidenceQualityText(entry, evidence)),
     todayMission: result.todayMission.map((mission) => ({
       ...mission,
@@ -1236,6 +1336,23 @@ function buildPrompt(payload: GeneratePayload, currentStage: CurrentStage) {
     "- Forbidden: treating AI-generated customer problems, summaries, memory text, or mission text as validated customer needs.",
     "- Forbidden: saying demand exists, it will sell, or the market wants it without Structured Evidence Context support.",
   ].join("\n");
+  const revenueHypothesisRules = [
+    "Revenue Hypothesis Rules:",
+    "- revenueHypothesis is an internal generation-only object. Return it in this Gemini JSON, but it is not part of the public API response.",
+    "- When currentStage is validating, selling, repeating, optimizing, or scaling and a revenue test is the decision target, return every revenueHypothesis field. Otherwise return revenueHypothesis as null.",
+    "- When revenueHypothesis is present, use its fields as the single source for the corresponding existing display fields: conclusion summarizes buyer, problem, offer, paidReason; salesSimulation.price uses priceHypothesis; todayPlan uses firstCustomerPath, requiredTime, requiredBudget; todayMission uses smallestValidation; reasons use successCondition and failureCondition; nextStep uses nextDecision. Do not repeat the same content elsewhere without a reason.",
+    "- buyer: identify who would pay. problem: identify the problem they may pay to solve. offer: identify the smallest deliverable. paidReason: explain the paid value beyond free information, such as tailored work, implementation, review, access, or time saved. Do not invent proof that this value is wanted.",
+    "- priceHypothesis: write one minimum-test price as a hypothesis, for example '価格仮説: 3,000円'. Never present it as a proven market price. If the basis is weak but buyer, problem, and offer are organized, still propose one small test price.",
+    "- firstCustomerPath: name a realistic first-customer candidate path that matches the user's available time, budget, experience, and Shared User Artifacts, such as 3 to 5 interview candidates, 1 to 3 direct paid proposals, or a small existing contact group. Shared User Artifacts personalize the path but never prove demand or sales.",
+    "- requiredTime and requiredBudget: give only the minimum resources for the test, tied to explicit Current State Map constraints. If a constraint is unknown, say '要確認' rather than inventing it.",
+    "- smallestValidation: before development or expansion, prefer 3 to 5 interviews, 1 to 3 paid proposals, manual delivery, a simple document or text proposal, a pre-order, or a reservation/application-intent check.",
+    "- successCondition must be observable and say that meeting it permits the next step. failureCondition must say what response means revise or stop. nextDecision must name what will be decided after the test.",
+    "- Never start with full-scale development, ad spend, incorporation, a large landing page, or mass acquisition. Keep the test small and reversible.",
+    "- If currentStage is exploring or defining and buyer, problem, or offer is not organized, revenueHypothesis must be null. Return needsMoreInfo or a current-stage Mission to organize and test those prerequisites first.",
+    "- If Structured Evidence or the Current State Map is insufficient for a revenue hypothesis, revenueHypothesis must be null. Prefer needsMoreInfo or the smallest current-stage Mission.",
+    "- Treat all unverified revenue language as hypotheses: use '価格仮説', '需要を確認する', '支払い意思を検証する', '初回販売候補', and '成功条件を満たしたら次へ進む'.",
+    "- Unless directly supported by observedResults, never state or imply '儲かる', '売れる', '需要がある', '成功する', or a monthly-income amount as a fact. Do not include unsupported sales, profit, conversion-rate, or revenue figures in any field, including salesSimulation.",
+  ].join("\n");
 
   return `${exampleFormatting}
 
@@ -1251,7 +1368,21 @@ JSON:
   "todayPlan": ["09:00-09:20 行動", "09:20-09:40 行動", "09:40-10:00 行動"],
   "sevenDayPlan": ["Day1: 行動", "Day2: 行動", "Day3: 行動"],
   "ninetyDayPlan": ["Phase1: 行動", "Phase2: 行動", "Phase3: 行動"],
-  "salesSimulation": { "price": "販売価格", "requiredSales": "必要販売数", "targetProfit": "利益" },
+  "salesSimulation": { "price": "価格仮説。例: 価格仮説: 3,000円", "requiredSales": "検証用の必要販売数。例: 初回販売候補1件", "targetProfit": "検証目的。例: 支払い意思を確認する" },
+  "revenueHypothesis": {
+    "buyer": "支払う人の仮説",
+    "problem": "支払う問題の仮説",
+    "offer": "最小の提供内容",
+    "paidReason": "無料情報ではなく支払う理由の仮説",
+    "priceHypothesis": "価格仮説: 3,000円",
+    "firstCustomerPath": "最初の顧客候補への経路",
+    "requiredTime": "最小検証に必要な時間",
+    "requiredBudget": "最小検証に必要な費用",
+    "smallestValidation": "開発前の最小検証",
+    "successCondition": "次へ進む観測可能な条件",
+    "failureCondition": "修正または停止する条件",
+    "nextDecision": "検証後に決めること"
+  },
   "dontDo": ["やらないこと1", "やらないこと2", "やらないこと3"],
   "todayMission": [
     {
@@ -1300,8 +1431,11 @@ JSON:
 - 1問は短く、答えやすく、長文入力を前提にしない
 - 一般論の質問や広すぎる質問はしない
 - missingCriticalInfo が次の判断に重要なら、その不足だけを具体的に質問する
+- revenueHypothesisは、12項目すべてを持つオブジェクトかnullだけを返す。不完全なオブジェクトは禁止
 ${missionReadinessRules}
 ${missionContinuationRules ? `\n${missionContinuationRules}` : ""}
+
+${revenueHypothesisRules}
 
 ${currentStateMap}
 
