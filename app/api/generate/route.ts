@@ -273,6 +273,15 @@ function normalizeResult(
     const revenueHypothesis = normalizedRevenueHypothesis
       ? applyRevenueQualityGate(normalizedRevenueHypothesis, payload)
       : null;
+    const hasRevenueHypothesisCandidate = parsed.revenueHypothesis !== undefined
+      && parsed.revenueHypothesis !== null;
+    const salesSimulation = hasRevenueHypothesisCandidate && !revenueHypothesis
+      ? emptySalesSimulation
+      : {
+        price: parsed.salesSimulation?.price?.trim() || defaultResult.salesSimulation.price,
+        requiredSales: parsed.salesSimulation?.requiredSales?.trim() || defaultResult.salesSimulation.requiredSales,
+        targetProfit: parsed.salesSimulation?.targetProfit?.trim() || defaultResult.salesSimulation.targetProfit,
+      };
 
     const normalized = projectRevenueHypothesis({
       verdict: normalizeVerdict(parsed.verdict),
@@ -282,11 +291,7 @@ function normalizeResult(
       todayPlan: normalizeStringArray(parsed.todayPlan, defaultResult.todayPlan),
       sevenDayPlan: normalizeStringArray(parsed.sevenDayPlan, defaultResult.sevenDayPlan),
       ninetyDayPlan: normalizeStringArray(parsed.ninetyDayPlan, defaultResult.ninetyDayPlan),
-      salesSimulation: {
-        price: parsed.salesSimulation?.price?.trim() || defaultResult.salesSimulation.price,
-        requiredSales: parsed.salesSimulation?.requiredSales?.trim() || defaultResult.salesSimulation.requiredSales,
-        targetProfit: parsed.salesSimulation?.targetProfit?.trim() || defaultResult.salesSimulation.targetProfit,
-      },
+      salesSimulation,
       dontDo,
       todayMission,
       atlasComment: parsed.atlasComment?.trim() || fallbackAtlasComment,

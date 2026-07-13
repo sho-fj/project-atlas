@@ -257,7 +257,12 @@ export default function ResultScreen({
                 </div>
               ) : (
                 <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 px-4 py-5">
-                  <p className="text-sm font-black text-slate-900">試算データを生成できませんでした。</p>
+                  <p className="text-sm font-black text-slate-900">
+                    まだ試算できる段階ではありません。
+                  </p>
+                  <p className="mt-2 text-sm font-bold leading-6 text-slate-600">
+                    対象者・悩み・提供内容・価格仮説が固まると、売上や必要件数を試算できます。まずは下のNEXT ACTIONを進めてください。
+                  </p>
                 </div>
               )}
             </Panel>
