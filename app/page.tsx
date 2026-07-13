@@ -253,8 +253,60 @@ function formatMissionExample(example?: string) {
     .trim();
 }
 
+function buildStoredMissionExample(mission: MissionItem) {
+  const text = `${getMissionTitle(mission)} ${mission.action ?? ""} ${mission.deliverable ?? ""}`;
+  if (/競合|価格/.test(text)) return "サービスA：3,000円／60分相談\nサービスB：5,000円／診断レポート付き\nサービスC：月額2,980円／チャット相談";
+  if (/質問/.test(text)) return "今、最も時間がかかっていることは何ですか？\nそれを変えるために試したことはありますか？\n改善できたら何が一番楽になりますか？";
+  if (/困りごと|悩み|課題/.test(text)) return "毎日の確認作業に30分以上かかる\n担当者ごとに教え方が違い同じミスが繰り返される\n引き継ぎが口頭だけで重要事項が抜ける";
+  if (/経験|興味|頼まれたこと|強み/.test(text)) return "会議メモを要点3つに整理した経験\n手順が分からない人へ資料の使い方を説明した経験\n週末に写真を撮って記録を続けている興味";
+  return "朝の作業手順を1枚に整理する\n問い合わせ内容を3分類する\n週次の確認項目を共有する";
+}
+
+function isProposalOrSendingMission(mission: MissionItem) {
+  return /送信|提案文|見込み客|有料提案|営業文|連絡する/.test(
+    `${getMissionTitle(mission)} ${mission.action ?? ""} ${mission.deliverable ?? ""} ${mission.doneCriteria ?? ""}`,
+  );
+}
+
+function hasProposalExampleStructure(example?: string) {
+  const normalized = formatMissionExample(example);
+  return ["対象者：", "相手の悩み：", "提供内容：", "価格：", "伝える文："].every((label) => normalized.includes(label));
+}
+
+function restoreMissionExample(mission: MissionItem): MissionItem {
+  const existingExample = formatMissionExample(mission.example);
+  if (isProposalOrSendingMission(mission) && !hasProposalExampleStructure(existingExample)) {
+    return {
+      ...mission,
+      example: "対象者：副業を始めたいが、何を売ればよいか決まっていない会社員\n相手の悩み：経験をどのように商品化すればよいか分からない\n提供内容：60分で経験を整理し、販売候補1つと提案文を作る\n価格：3,000円（価格仮説）\n伝える文：副業を始めたいけれど、何を売ればよいか迷っている方向けに、経験を整理して最初の商品案を作る相談を試しています。3,000円で一度試してみませんか？",
+    };
+  }
+  return existingExample ? mission : { ...mission, example: buildStoredMissionExample(mission) };
+}
+
 function normalizeArtifactComparisonText(value: string) {
   return value.replace(/\s/g, "");
+}
+
+function buildArtifactTemplate(mission: MissionItem) {
+  const text = `${getMissionTitle(mission)} ${mission.action ?? ""} ${mission.deliverable ?? ""} ${formatMissionExample(mission.example)}`;
+  if (/提案文|営業文|送信|見込み客|有料提案|連絡する|連絡|伝える文|メッセージ/.test(text)) return "対象者：\n相手の悩み：\n提供内容：\n価格：\n伝える文：";
+  if (/競合|比較|料金を調査|価格を記録|サービス名/.test(text)) return "1. サービス名：\n   価格：\n   提供内容：\n\n2. サービス名：\n   価格：\n   提供内容：\n\n3. サービス名：\n   価格：\n   提供内容：";
+  if (/困りごと.*人|人.*困りごと|対象者.*困りごと|対象者|顧客/.test(text)) return "1. 対象者：\n   困りごと：\n\n2. 対象者：\n   困りごと：\n\n3. 対象者：\n   困りごと：";
+  if (/経験|興味|頼まれたこと|強み/.test(text)) return "1. 経験：\n2. 経験：\n3. 興味：";
+  if (/質問/.test(text)) return "1. 質問：\n2. 質問：\n3. 質問：";
+  if (/困りごと|悩み|課題/.test(text)) return "1. 困りごと：\n2. 困りごと：\n3. 困りごと：";
+  return "1. 内容：\n2. 内容：\n3. 内容：";
+}
+
+function hasUserArtifactContent(value: string, template: string, example: string) {
+  const normalized = normalizeArtifactComparisonText(value);
+  const contentOnly = value
+    .replace(/^\s*(?:[0-9０-９]+[.．、]?\s*)?(?:サービス名|価格|提供内容|対象者（困りごと）|困りごと|経験|興味|質問|対象者|顧客|相手の悩み|伝える文|内容)\s*[:：]?\s*$/gm, "")
+    .replace(/\s/g, "");
+  return Boolean(contentOnly)
+    && normalized !== normalizeArtifactComparisonText(template)
+    && normalized !== normalizeArtifactComparisonText(example);
 }
 
 function toMissionItem(source: AtlasMissionDraft, index: number): MissionItem | null {
@@ -340,6 +392,15 @@ function readUserArtifactsForGeneration(): UserArtifact[] {
   }
 }
 
+function getLatestSharedArtifactForMission(mission: MissionItem) {
+  const title = getMissionTitle(mission);
+  const action = mission.action?.trim() || "";
+  return readStoredValue<UserArtifact[]>("atlas-user-artifacts", [])
+    .filter((artifact): artifact is UserArtifact => Boolean(artifact && artifact.type === "mission_artifact" && artifact.source === "user" && typeof artifact.content === "string" && typeof artifact.missionTitle === "string" && typeof artifact.missionAction === "string" && typeof artifact.sharedAt === "string"))
+    .filter((artifact) => artifact.missionTitle === title && (!action || !artifact.missionAction || artifact.missionAction === action))
+    .sort((left, right) => Date.parse(right.sharedAt) - Date.parse(left.sharedAt))[0];
+}
+
 function readStoredText(key: string, fallback = "") {
   if (typeof window === "undefined") {
     return fallback;
@@ -408,6 +469,7 @@ export default function HomePage() {
     homework: "初回面談を完了する",
   });
   const [missions, setMissions] = useState<MissionItem[]>([]);
+  const [continuationWait, setContinuationWait] = useState<Extract<MissionContinuationResult, { status: "wait" }> | null>(null);
   const [missionHistory, setMissionHistory] = useState<MissionHistoryEntry[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
   const [showGhostEvent, setShowGhostEvent] = useState(false);
@@ -430,7 +492,7 @@ export default function HomePage() {
 
       setAtlasProfile(storedProfile);
       setInterviewAnswers(storedAnswers);
-      setMissions(storedMissions);
+      setMissions(storedMissions.map(restoreMissionExample));
       setMissionHistory(storedMissionHistory);
       setConversationHistory(storedConversationHistory);
       setUserName(storedUserName);
@@ -816,10 +878,11 @@ export default function HomePage() {
       }
 
       if (generationContext.kind === "continuation") {
-        const extractedMissions = nextResult.verdict === "GO" ? extractMissionItems(nextResult) : [];
+        const extractedMissions = nextResult.todayMission.length > 0 ? extractMissionItems(nextResult) : [];
 
         if (extractedMissions.length > 0) {
           setMissions(extractedMissions);
+          setContinuationWait(null);
           setResult({
             ...nextResult,
             todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
@@ -832,6 +895,12 @@ export default function HomePage() {
           return;
         }
 
+        setMissions([]);
+        setContinuationWait({
+          status: "wait",
+          reason: nextResult.reasons[0] || nextResult.conclusion || "次の判断材料がまだ不足しています。",
+          resumeCondition: nextResult.nextStep || "反応や結果が返ってきたら再開する。",
+        });
         resetFollowUpState();
         setScreen("mission");
         return;
@@ -895,6 +964,7 @@ export default function HomePage() {
       const nextResult = await executeAtlasGeneration(context);
 
       if (nextResult.needsMoreInfo && nextResult.followUpQuestions.length > 0) {
+        setContinuationWait(null);
         requestFollowUp(nextResult, context);
         return {
           status: "wait",
@@ -903,10 +973,11 @@ export default function HomePage() {
         };
       }
 
-      const extractedMissions = nextResult.verdict === "GO" ? extractMissionItems(nextResult) : [];
+      const extractedMissions = nextResult.todayMission.length > 0 ? extractMissionItems(nextResult) : [];
 
       if (extractedMissions.length > 0) {
         setMissions(extractedMissions);
+        setContinuationWait(null);
         setResult({
           ...nextResult,
           todayMission: extractedMissions.map((mission) => getMissionTitle(mission)),
@@ -919,13 +990,16 @@ export default function HomePage() {
         return { status: "mission" };
       }
 
-      setLoadingComplete(true);
-      setScreen("mission");
-      return {
-        status: "wait",
+      const waitResult = {
+        status: "wait" as const,
         reason: nextResult.reasons[0] || nextResult.conclusion || "次の判断材料がまだ不足しています。",
         resumeCondition: nextResult.nextStep || "反応や結果が返ってきたら再開する。",
       };
+      setMissions([]);
+      setContinuationWait(waitResult);
+      setLoadingComplete(true);
+      setScreen("mission");
+      return waitResult;
     } catch {
       setLoadingComplete(true);
       setScreen("mission");
@@ -1153,6 +1227,7 @@ export default function HomePage() {
             <TopActions onDashboard={handleDashboardReturn} onNewConsultation={handleStartInterview} />
             <MissionPanel
               missions={missions}
+              continuationWait={continuationWait}
               progressPercent={progressPercent}
               atlasComment={atlasComment}
               strategy={strategy}
@@ -1185,6 +1260,7 @@ export default function HomePage() {
             {missions.length > 0 && (
               <MissionPanel
                 missions={missions}
+                continuationWait={continuationWait}
                 progressPercent={progressPercent}
                 atlasComment={atlasComment}
                 strategy={strategy}
@@ -1734,6 +1810,7 @@ function MemoryDeltaCard({ completedMissionCount }: { completedMissionCount: num
 
 function MissionPanel({
   missions,
+  continuationWait,
   progressPercent,
   atlasComment,
   strategy,
@@ -1744,6 +1821,7 @@ function MissionPanel({
   showNextStep = true,
 }: {
   missions: MissionItem[];
+  continuationWait: Extract<MissionContinuationResult, { status: "wait" }> | null;
   progressPercent: number;
   atlasComment: string;
   strategy: StrategyState;
@@ -1764,6 +1842,8 @@ function MissionPanel({
   const [selectedOutcome, setSelectedOutcome] = useState<MissionOutcome | null>(null);
   const [isContinuingMission, setIsContinuingMission] = useState(false);
   const [waitResult, setWaitResult] = useState<Extract<MissionContinuationResult, { status: "wait" }> | null>(null);
+  const visibleWaitResult = waitResult ?? continuationWait;
+  const hasSharedMissionArtifact = missions.some((mission) => Boolean(getLatestSharedArtifactForMission(mission)));
 
   useEffect(() => {
     if (!allMissionsDone) {
@@ -1793,13 +1873,8 @@ function MissionPanel({
   };
 
   const handleStartArtifactEdit = (mission: MissionItem) => {
-    const exampleText = formatMissionExample(mission.example);
-    if (!exampleText) {
-      return;
-    }
-
     setEditingExampleId(mission.id);
-    setArtifactDraft(exampleText);
+    setArtifactDraft(getLatestSharedArtifactForMission(mission)?.content ?? buildArtifactTemplate(mission));
     setArtifactMessage(null);
   };
 
@@ -1811,10 +1886,9 @@ function MissionPanel({
   const handleShareArtifact = (mission: MissionItem) => {
     const originalExample = formatMissionExample(mission.example);
     const nextContent = artifactDraft.trim();
-    const normalizedOriginalExample = normalizeArtifactComparisonText(originalExample);
-    const normalizedNextContent = normalizeArtifactComparisonText(nextContent);
+    const template = buildArtifactTemplate(mission);
 
-    if (!normalizedNextContent || normalizedNextContent === normalizedOriginalExample) {
+    if (!hasUserArtifactContent(nextContent, template, originalExample)) {
       return;
     }
 
@@ -1830,7 +1904,7 @@ function MissionPanel({
         sharedAt: new Date().toISOString(),
       };
       window.localStorage.setItem("atlas-user-artifacts", JSON.stringify([...storedArtifacts, nextArtifact]));
-      setArtifactMessage({ type: "success", text: "Atlasと共有しました", missionId: mission.id });
+      setArtifactMessage(null);
       setEditingExampleId(null);
       setArtifactDraft("");
     } catch {
@@ -1887,16 +1961,9 @@ function MissionPanel({
                 }`}
               >
                 <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_72px] sm:items-start">
-                  <button
-                    type="button"
-                    aria-pressed={mission.done}
-                    onClick={() => onToggleMission(mission.id)}
-                    className={`group grid min-h-16 grid-cols-[32px_minmax(0,1fr)] items-start gap-3 text-left transition duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-100 ${
-                      mission.done ? "" : "hover:-translate-y-0.5"
-                    }`}
-                  >
+                  <div className="grid min-h-16 grid-cols-[32px_minmax(0,1fr)] items-start gap-3 text-left">
                     <span className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-[10px] border transition duration-200 ${
-                      mission.done ? "border-emerald-300 bg-emerald-500 text-white scale-105" : "border-slate-200 bg-white text-slate-300 group-hover:border-indigo-300 group-hover:text-indigo-500"
+                      mission.done ? "border-emerald-300 bg-emerald-500 text-white scale-105" : "border-slate-200 bg-white text-slate-300"
                     }`}>
                       {mission.done ? <CheckCircle2 className="h-5 w-5" /> : index + 1}
                     </span>
@@ -1906,7 +1973,7 @@ function MissionPanel({
                         {mission.done ? "処理済み。履歴に記録。" : `${index + 1}/${missionTotal} / 本日の最適行動`}
                       </span>
                     </span>
-                  </button>
+                  </div>
 
                   <span className={`justify-self-start rounded-full px-2 py-1 text-center text-xs font-black sm:justify-self-end ${
                     index === 0 ? "bg-[#5FA8A0]/12 text-[#25736C]" : index === 1 ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-600"
@@ -1946,8 +2013,8 @@ function MissionPanel({
 
                 {formatMissionExample(mission.example) && (
                   <div className="mt-4">
-                    {artifactMessage?.missionId === mission.id && (
-                      <p className={`mb-3 text-sm font-black ${artifactMessage.type === "success" ? "text-emerald-600" : "text-rose-600"}`}>
+                    {artifactMessage?.missionId === mission.id && artifactMessage.type === "error" && (
+                      <p className="mb-3 text-sm font-black text-rose-600">
                         {artifactMessage.text}
                       </p>
                     )}
@@ -1979,18 +2046,27 @@ function MissionPanel({
                         <div className="mt-4 rounded-[16px] bg-white px-4 py-4 text-sm font-bold leading-7 text-slate-800 shadow-[0_8px_24px_rgba(79,70,229,0.05)] whitespace-pre-wrap break-words select-text">
                           {formatMissionExample(mission.example)}
                         </div>
+                        {getLatestSharedArtifactForMission(mission) && (
+                          <div className="mt-4 rounded-[16px] border border-emerald-100 bg-emerald-50/50 px-4 py-4">
+                            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">Atlasと共有済み</p>
+                            <p className="mt-2 whitespace-pre-wrap break-words text-sm font-bold leading-7 text-slate-900">
+                              {getLatestSharedArtifactForMission(mission)?.content}
+                            </p>
+                            <p className="mt-2 text-xs font-bold leading-5 text-emerald-800">この内容を次の判断に使います。</p>
+                          </div>
+                        )}
                         <div className="mt-4">
                           <button
                             type="button"
                             onClick={() => handleStartArtifactEdit(mission)}
                             className="inline-flex min-h-10 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-3 text-sm font-black text-slate-700 transition duration-200 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                           >
-                            自分用に書き換える
+                            {getLatestSharedArtifactForMission(mission) ? "共有内容を修正する" : "自分用に書き換える"}
                           </button>
                         </div>
                         {editingExampleId === mission.id && (
                           <div className="mt-4 rounded-[16px] border border-slate-200 bg-white p-4">
-                            <p className="text-sm font-black text-slate-950">自分用に書き換える</p>
+                            <p className="text-sm font-black text-slate-950">{getLatestSharedArtifactForMission(mission) ? "共有内容を修正する" : "自分用に書き換える"}</p>
                             <textarea
                               value={artifactDraft}
                               onChange={(event) => setArtifactDraft(event.target.value)}
@@ -2002,9 +2078,11 @@ function MissionPanel({
                                 type="button"
                                 onClick={() => handleShareArtifact(mission)}
                                 disabled={
-                                  !normalizeArtifactComparisonText(artifactDraft.trim()) ||
-                                  normalizeArtifactComparisonText(artifactDraft.trim()) ===
-                                    normalizeArtifactComparisonText(formatMissionExample(mission.example))
+                                  !hasUserArtifactContent(
+                                    artifactDraft.trim(),
+                                    buildArtifactTemplate(mission),
+                                    formatMissionExample(mission.example),
+                                  )
                                 }
                                 className="inline-flex min-h-10 items-center justify-center rounded-[12px] bg-slate-950 px-4 text-sm font-black text-white transition duration-200 hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-300"
                               >
@@ -2024,16 +2102,40 @@ function MissionPanel({
                     )}
                   </div>
                 )}
+
+                <div className="mt-5 border-t border-slate-100 pt-4">
+                  <button
+                    type="button"
+                    aria-label={mission.done ? `${getMissionTitle(mission)} の完了を取り消す` : `${getMissionTitle(mission)} を完了にする`}
+                    onClick={() => onToggleMission(mission.id)}
+                    className={`inline-flex min-h-12 w-full items-center justify-center rounded-[14px] px-4 text-sm font-black transition focus:outline-none focus:ring-4 ${
+                      mission.done
+                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 focus:ring-emerald-100"
+                        : "bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)] hover:bg-slate-800 focus:ring-slate-200"
+                    }`}
+                  >
+                    {mission.done ? "完了を取り消す" : "完了にする"}
+                  </button>
+                  {mission.done && <p className="mt-2 text-center text-xs font-black text-emerald-700">✓ 完了済み</p>}
+                </div>
               </article>
             ))}
           </div>
         )}
 
-        <div className="mt-6 rounded-[20px] bg-[#F4F6F8] p-4">
+        {!hasSharedMissionArtifact && <div className="mt-6 rounded-[20px] bg-[#F4F6F8] p-4">
           <p className="text-sm font-bold text-slate-500">Atlas</p>
           <p className="mt-2 text-sm font-semibold leading-7 text-slate-950">{atlasComment}</p>
-        </div>
+        </div>}
       </section>
+
+      {visibleWaitResult && !allMissionsDone && (
+        <section className="rounded-[24px] border border-amber-100 bg-amber-50/40 p-5">
+          <p className="text-[12px] font-black uppercase tracking-[0.18em] text-amber-600">今は待つ</p>
+          <p className="mt-3 text-sm font-bold leading-6 text-slate-900">{visibleWaitResult.reason}</p>
+          <p className="mt-2 text-sm font-bold leading-6 text-slate-600">再開条件: {visibleWaitResult.resumeCondition}</p>
+        </section>
+      )}
 
       {showNextStep && allMissionsDone && (
         <section className="rounded-[30px] border border-emerald-100 bg-white p-5 shadow-[0_18px_54px_rgba(16,185,129,0.08)] sm:p-6">

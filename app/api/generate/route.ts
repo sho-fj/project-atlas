@@ -193,6 +193,7 @@ const defaultResult: AtlasResult = {
       deliverable: "競合価格メモ3行",
       doneCriteria: "競合名、価格、提供内容が3件分そろっている",
       timeEstimate: "20分",
+      example: "サービスA：3,000円／60分相談\nサービスB：5,000円／診断レポート付き\nサービスC：月額2,980円／チャット相談",
     },
     {
       title: "提案価格を修正",
@@ -200,6 +201,7 @@ const defaultResult: AtlasResult = {
       deliverable: "提案価格1つ",
       doneCriteria: "送信文に入れる価格が1つ決まっている",
       timeEstimate: "10分",
+      example: "価格仮説：5,000円\n提供内容：60分の個別相談と提案文1本\n検証方法：初回候補3人へ提案する",
     },
     {
       title: "3件へ送信",
@@ -207,6 +209,7 @@ const defaultResult: AtlasResult = {
       deliverable: "送信済み提案3件",
       doneCriteria: "3人に送信し、送信先と送信時刻を記録している",
       timeEstimate: "30分",
+      example: "対象者：発信準備に時間がかかる個人事業主\n相手の悩み：何を発信すればよいか決める作業が止まりやすい\n提供内容：1週間分の発信テーマを一緒に整理する60分相談\n価格：5,000円（価格仮説）\n伝える文：発信テーマの整理で時間がかかる場合、60分で1週間分の候補を一緒に整理する相談を5,000円で試しています。必要なら状況を10分だけ伺えます。",
     },
   ],
   atlasComment: "完成度より販売接触を優先。売れるかどうかを最優先に変更しました。",
@@ -264,9 +267,12 @@ function normalizeResult(
     const todayMission = normalizeMissionArray(parsed.todayMission, defaultResult.todayMission);
     const dontDo = normalizeStringArray(parsed.dontDo, defaultResult.dontDo);
     const followUpQuestions = normalizeStringArray(parsed.followUpQuestions, []).slice(0, 3);
-    const revenueHypothesis = parsed.needsMoreInfo === true
+    const normalizedRevenueHypothesis = parsed.needsMoreInfo === true
       ? null
       : normalizeRevenueHypothesis(parsed.revenueHypothesis, currentStage);
+    const revenueHypothesis = normalizedRevenueHypothesis
+      ? applyRevenueQualityGate(normalizedRevenueHypothesis, payload)
+      : null;
 
     const normalized = projectRevenueHypothesis({
       verdict: normalizeVerdict(parsed.verdict),
@@ -289,12 +295,12 @@ function normalizeResult(
       needsMoreInfo: parsed.needsMoreInfo === true && followUpQuestions.length > 0,
       followUpQuestions,
     }, revenueHypothesis);
-    return applyEvidenceQualityGate(
+    return finalizeMissionExamples(applyEvidenceQualityGate(
       payload,
       applyStageFitGate(payload, applyHardReadinessGate(payload, normalized), currentStage),
-    );
+    ));
   } catch {
-    return applyEvidenceQualityGate(
+    return finalizeMissionExamples(applyEvidenceQualityGate(
       payload,
       applyStageFitGate(payload, applyHardReadinessGate(payload, {
         ...defaultResult,
@@ -302,7 +308,7 @@ function normalizeResult(
         decisionLog: fallbackDecisionLog,
         atlasComment: fallbackAtlasComment,
       }), currentStage),
-    );
+    ));
   }
 }
 
@@ -345,6 +351,137 @@ function normalizeRevenueHypothesis(value: unknown, currentStage: CurrentStage):
     failureCondition,
     nextDecision,
   };
+}
+
+function applyRevenueQualityGate(revenueHypothesis: RevenueHypothesis, payload: GeneratePayload): RevenueHypothesis | null {
+  const allFields = Object.values(revenueHypothesis).join(" ");
+  const hasUnsupportedAssertion = containsUnsupportedRevenueAssertion(allFields, payload);
+
+  const isValid = [
+    isSpecificRevenueBuyer(revenueHypothesis.buyer),
+    isSpecificRevenueProblem(revenueHypothesis.problem),
+    isConcreteRevenueOffer(revenueHypothesis.offer),
+    isConcretePaidReason(revenueHypothesis.paidReason),
+    isTestablePriceHypothesis(revenueHypothesis.priceHypothesis),
+    isSpecificFirstCustomerPath(revenueHypothesis.firstCustomerPath),
+    isViableRequiredTime(revenueHypothesis.requiredTime, payload),
+    isViableRequiredBudget(revenueHypothesis, payload),
+    isSmallestValidation(revenueHypothesis.smallestValidation),
+    isMeasurableCondition(revenueHypothesis.successCondition),
+    isMeasurableCondition(revenueHypothesis.failureCondition),
+    isClearNextDecision(revenueHypothesis.nextDecision),
+    !hasUnsupportedAssertion,
+  ].every(Boolean);
+
+  return isValid ? revenueHypothesis : null;
+}
+
+function containsUnsupportedRevenueAssertion(value: string, payload: GeneratePayload) {
+  const hypothesisLanguage = value
+    .replace(/需要があるか(確認|確かめ|検証)する/g, "")
+    .replace(/売れるか(確認|検証)する/g, "")
+    .replace(/支払い意思を(確かめ|確認|検証)する/g, "")
+    .replace(/[0-9０-９,，]+円で提案して反応を見る/g, "")
+    .replace(/価格仮説/g, "");
+  const factualAssertion = /需要がある|売れる(?!か|条件|可能性)|成功する|顧客が集まる|収益化できる|儲かる|月収\s*[0-9０-９,，万円円]+/.test(hypothesisLanguage);
+  return factualAssertion
+    && !evidenceHasKeywordSupport(collectStructuredEvidence(payload).observedResults, ["販売", "購入", "申込", "支払い", "受注"]);
+}
+
+function isSpecificRevenueBuyer(value: string) {
+  const broadBuyer = /^(みんな|企業|個人|副業したい人|困っている人)$/;
+  const context = /\d|[0-9０-９]+代|会社員|責任者|担当者|新人|前職|現場|[がでに].{2,}(困|決ま|ばらつ|時間|未経験|不安)/;
+  return value.length >= 6 && !broadBuyer.test(value.replace(/[。！!]/g, "")) && context.test(value);
+}
+
+function isSpecificRevenueProblem(value: string) {
+  const vagueProblem = /^(売上を増やしたい|効率化したい|困っている|成長したい)$/;
+  const situation = /で|時|場面|新人|顧客|現場|業務|提案|教育|販売/;
+  const pain = /困|時間|ばらつ|決まら|できな|不安|手間|失敗|迷/;
+  return value.length >= 8 && !vagueProblem.test(value.replace(/[。！!]/g, "")) && situation.test(value) && pain.test(value);
+}
+
+function isConcreteRevenueOffer(value: string) {
+  const vagueOffer = /^(AIサービス|コンサル|サポート|アプリ)$/;
+  const deliverable = /ヒアリング|提案文|一覧|診断|添削|レビュー|整理|作成|設計|テンプレ|手作業|資料/;
+  return value.length >= 6 && !vagueOffer.test(value.replace(/[。！!]/g, "")) && deliverable.test(value);
+}
+
+function isConcretePaidReason(value: string) {
+  const vagueReason = /^(便利だから|価値があるから|時間を節約できるから)$/;
+  return value.length >= 8 && !vagueReason.test(value.replace(/[。！!]/g, ""));
+}
+
+function parseJapaneseAmount(value: string) {
+  const normalized = value.replace(/[，,]/g, "").replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xFEE0));
+  const match = normalized.match(/(\d+(?:\.\d+)?)\s*(万)?円/);
+  if (!match) return null;
+  return Number(match[1]) * (match[2] ? 10000 : 1);
+}
+
+function isTestablePriceHypothesis(value: string) {
+  const amount = parseJapaneseAmount(value);
+  return amount !== null
+    && amount > 0
+    && /(仮説|テスト|試験)/.test(value)
+    && !/高価格|要相談|市場価格|保証|月収|売上予測/.test(value);
+}
+
+function isSpecificFirstCustomerPath(value: string) {
+  const contactCount = /[1-3１-３]\s*(人|名|件)/;
+  const directPath = /個別連絡|連絡|ヒアリング|依頼|紹介|知人|コミュニティ/;
+  return value.length >= 8 && contactCount.test(value) && directPath.test(value) && !/^(SNSで集客する|広告を出す|営業する|口コミを増やす)$/.test(value);
+}
+
+function parseMinutes(value: string) {
+  const normalized = value.replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xFEE0));
+  const hours = normalized.match(/(\d+(?:\.\d+)?)\s*時間/);
+  const minutes = normalized.match(/(\d+)\s*分/);
+  if (hours) return Number(hours[1]) * 60 + (minutes ? Number(minutes[1]) : 0);
+  return minutes ? Number(minutes[1]) : null;
+}
+
+function isViableRequiredTime(value: string, payload: GeneratePayload) {
+  const requiredMinutes = parseMinutes(value);
+  const availableTime = payload.profile?.availableTime
+    || payload.interviewAnswers?.find((entry) => ["weekdayTime", "reTime"].includes(entry.questionId))?.answer
+    || "";
+  const availableMinutes = availableTime ? parseMinutes(availableTime.split(/[〜～]/).at(-1) ?? "") : null;
+  return requiredMinutes !== null && requiredMinutes > 0
+    && (availableMinutes === null || requiredMinutes <= availableMinutes);
+}
+
+function isViableRequiredBudget(revenueHypothesis: RevenueHypothesis, payload: GeneratePayload) {
+  const requiredBudget = /^(0円|無料)$/.test(revenueHypothesis.requiredBudget.trim()) ? 0 : parseJapaneseAmount(revenueHypothesis.requiredBudget);
+  const budgetAnswer = payload.interviewAnswers?.find((entry) => entry.questionId === "initialCost")?.answer ?? "";
+  const availableBudget = /^(0円|無料)$/.test(budgetAnswer.trim()) ? 0 : parseJapaneseAmount(budgetAnswer);
+  const requiresLargeSpend = /広告|本格開発|外注|大きな購入|大量集客/.test(
+    `${revenueHypothesis.requiredBudget} ${revenueHypothesis.smallestValidation}`,
+  );
+  const isLowCostWhenUnknown = requiredBudget === 0
+    || /無料|低額|少額/.test(revenueHypothesis.requiredBudget)
+    || (requiredBudget !== null && requiredBudget <= 10000 && !requiresLargeSpend);
+  return requiredBudget !== null && requiredBudget >= 0
+    && (availableBudget === null ? isLowCostWhenUnknown : requiredBudget <= availableBudget);
+}
+
+function isSmallestValidation(value: string) {
+  const prohibited = /本格開発|アプリを開発|LPを完成|広告を運用|広告出稿|100人集客|大量集客/;
+  const smallTest = /[1-5１-５]\s*(人|名|件)|ヒアリング|有料提案|手作業|簡易(資料|文章)|先行募集|予約|申込意思/;
+  return value.length >= 6 && !prohibited.test(value) && smallTest.test(value);
+}
+
+function isMeasurableCondition(value: string) {
+  const observable = /[0-9０-９]+\s*(人|名|件)|全員|以上|以下/;
+  const event = /回答|申込|支払|有料|不要|断|反応|連絡/;
+  return value.length >= 8 && observable.test(value) && event.test(value)
+    && !/反応が良ければ|手応えがなければ|成功したら続ける/.test(value);
+}
+
+function isClearNextDecision(value: string) {
+  const condition = /なら|場合|以上|なければ|失敗|成功/;
+  const decision = /提供|見直|修正|続け|停止|絞|変更|決め/;
+  return value.length >= 8 && condition.test(value) && decision.test(value);
 }
 
 function projectRevenueHypothesis(result: AtlasResult, revenueHypothesis: RevenueHypothesis | null): AtlasResult {
@@ -416,15 +553,13 @@ function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "d
   const deliverable = mission.deliverable?.trim();
   const lower = `${title} ${action ?? ""} ${deliverable ?? ""}`.toLowerCase();
 
+  if (isProposalOrSendingMission({ title, action, deliverable, doneCriteria: mission.doneCriteria })) {
+    return buildProposalExample();
+  }
+
   if (/価格|競合/.test(lower)) {
     return stripMarkdown(
       "10,000円: 初回相談\n30,000円: 個別サポート\n50,000円: 継続サポート",
-    );
-  }
-
-  if (/提案|送信|営業|連絡|メッセージ/.test(lower)) {
-    return stripMarkdown(
-      "相手Aさん\n突然のご連絡失礼します。\n○○の課題を見て、△△でお手伝いできると思いご連絡しました。\n必要であれば、まずは短く状況を伺えます。",
     );
   }
 
@@ -433,18 +568,34 @@ function buildMissionExample(mission: Pick<MissionDraft, "title" | "action" | "d
   }
 
   if (/困りごと|悩み/.test(lower)) {
-    return stripMarkdown("時間がかかること\n繰り返し発生すること\nお金を払ってでも減らしたいこと");
+    return stripMarkdown("毎日の確認作業に30分以上かかる\n担当者ごとに教え方が違い同じミスが繰り返される\n引き継ぎが口頭だけで重要事項が抜ける");
   }
 
   if (/対象者|顧客/.test(lower)) {
-    return stripMarkdown("同じ状況にいる人\n時間を節約したい人\n初めて取り組む人");
+    return stripMarkdown("初めて副業の提案先を決める会社員\n新人教育の手順をそろえたい現場責任者\n定期的な発信の準備で止まりやすい個人事業主");
   }
 
   if (/経験|興味|頼まれたこと|振り返|強み|候補|整理/.test(lower)) {
-    return stripMarkdown("これまでの仕事\n人によく頼まれること\n長く続けている趣味");
+    return stripMarkdown("会議メモを要点3つに整理した経験\n手順が分からない人へ資料の使い方を説明した経験\n週末に写真を撮って記録を続けている興味");
   }
 
-  return stripMarkdown("候補A\n候補B\n候補C");
+  return stripMarkdown("朝の作業手順を1枚に整理する\n問い合わせ内容を3分類する\n週次の確認項目を共有する");
+}
+
+function isProposalOrSendingMission(mission: Pick<MissionDraft, "title" | "action" | "deliverable" | "doneCriteria">) {
+  return /3件へ送信|提案文|見込み客.*連絡|有料提案|営業文|送信|営業|連絡|メッセージ/.test(
+    `${mission.title} ${mission.action ?? ""} ${mission.deliverable ?? ""} ${mission.doneCriteria ?? ""}`,
+  );
+}
+
+function buildProposalExample() {
+  return stripMarkdown(
+    "対象者：発信準備に時間がかかる個人事業主\n相手の悩み：何を発信すればよいか決める作業が止まりやすい\n提供内容：1週間分の発信テーマを一緒に整理する60分相談\n価格：5,000円（価格仮説）\n伝える文：発信テーマの整理で時間がかかる場合、60分で1週間分の候補を一緒に整理する相談を5,000円で試しています。必要なら状況を10分だけ伺えます。",
+  );
+}
+
+function hasProposalExampleStructure(example: string) {
+  return ["対象者：", "相手の悩み：", "提供内容：", "価格：", "伝える文："].every((label) => example.includes(label));
 }
 
 function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
@@ -456,7 +607,7 @@ function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
     const items = value
       .map((item): MissionDraft | null => {
         if (typeof item === "string" && item.trim()) {
-          return { title: item.trim() };
+          return completeMissionDraft({ title: item.trim() });
         }
 
         if (!item || typeof item !== "object") {
@@ -470,19 +621,14 @@ function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
           return null;
         }
 
-        return {
+        return completeMissionDraft({
           title,
           action: mission.action?.trim() || undefined,
           deliverable: mission.deliverable?.trim() || undefined,
           doneCriteria: mission.doneCriteria?.trim() || undefined,
           timeEstimate: mission.timeEstimate?.trim() || undefined,
-          example: stripMarkdown(mission.example?.trim() || "") || buildMissionExample({
-            title,
-            action: mission.action?.trim() || undefined,
-            deliverable: mission.deliverable?.trim() || undefined,
-            doneCriteria: mission.doneCriteria?.trim() || undefined,
-          }),
-        };
+          example: stripMarkdown(mission.example?.trim() || "") || undefined,
+        });
       })
       .filter((item): item is MissionDraft => Boolean(item));
 
@@ -490,7 +636,7 @@ function normalizeMissionArray(value: unknown, fallback: MissionDraft[]) {
   }
 
   if (typeof value === "string" && value.trim()) {
-    return [{ title: value.trim() }];
+    return [completeMissionDraft({ title: value.trim() })];
   }
 
   return fallback;
@@ -526,6 +672,32 @@ function hasSubstance(value?: string) {
         .map((item) => item.toLowerCase().replace(/[ 　\t\r\n]+/g, ""))
         .includes(normalized),
   );
+}
+
+function completeMissionDraft(mission: MissionDraft): MissionDraft {
+  const title = mission.title.trim();
+  const action = mission.action?.trim() || `${title}を実行し、結果を記録する`;
+  const deliverable = mission.deliverable?.trim() || `${title}の記録`;
+  const doneCriteria = mission.doneCriteria?.trim() || `実行結果が${deliverable}として残っている`;
+  const existingExample = stripMarkdown(mission.example?.trim() || "");
+  const isProposalMission = isProposalOrSendingMission({ title, action, deliverable, doneCriteria });
+  return {
+    title,
+    action,
+    deliverable,
+    doneCriteria,
+    timeEstimate: mission.timeEstimate?.trim() || "20分",
+    example: isProposalMission
+      ? (hasProposalExampleStructure(existingExample) ? existingExample : buildProposalExample())
+      : existingExample || buildMissionExample({ title, action, deliverable, doneCriteria }),
+  };
+}
+
+function finalizeMissionExamples(result: AtlasResult): AtlasResult {
+  return {
+    ...result,
+    todayMission: result.todayMission.map((mission) => completeMissionDraft(mission)),
+  };
 }
 
 type EvidenceContext = {
@@ -693,6 +865,7 @@ function collectUserEvidence(payload: GeneratePayload) {
 
 function deriveCurrentStage(payload: GeneratePayload): CurrentStage {
   const evidence = collectStructuredEvidence(payload);
+  const hasExploringProgress = evidence.sharedArtifactTopics.length > 0 || collectCompletedMissionTitles(payload).length > 0;
   const userFacts = [
     evidence.goal,
     evidence.customerProblem,
@@ -732,7 +905,7 @@ function deriveCurrentStage(payload: GeneratePayload): CurrentStage {
     return "defining";
   }
 
-  if (hasSubstance(evidence.goal) || hasSubstance(evidence.availableTime) || evidence.statedFacts.length > 0) {
+  if (hasSubstance(evidence.goal) || hasSubstance(evidence.availableTime) || evidence.statedFacts.length > 0 || hasExploringProgress) {
     return "exploring";
   }
 
@@ -826,6 +999,7 @@ function collectCompletedMissionTitles(payload: GeneratePayload) {
   return [
     ...(payload.missionContinuation?.completedMissions.map((mission) => mission.title) ?? []),
     ...(payload.missionHistory ?? []).filter((entry) => entry.status === "完了").map((entry) => entry.mission),
+    ...collectSharedUserArtifacts(payload).map((artifact) => artifact.missionTitle),
   ].filter(hasSubstance);
 }
 
@@ -852,7 +1026,7 @@ function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): M
       deliverable: "経験と興味の候補3項目",
       doneCriteria: "3項目が短文で整理されている",
       timeEstimate: "10分",
-      example: "これまでの仕事\n人によく頼まれること\n長く続けている趣味",
+      example: "会議メモを要点3つに整理した経験\n家族にスマホ設定を説明した経験\n週末に写真を撮って記録する興味",
     },
     defining: {
       title: "対象者と悩みを1組に絞る",
@@ -908,7 +1082,7 @@ function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): M
           deliverable: "困りごと候補3項目",
           doneCriteria: "確認したい困りごとが3項目並んでいる",
           timeEstimate: "10分",
-          example: "時間がかかること\n繰り返し発生すること\nお金を払ってでも減らしたいこと",
+          example: "毎日の確認作業に30分以上かかる\n担当者ごとに教え方が違い同じミスが繰り返される\n引き継ぎが口頭だけで重要事項が抜ける",
         },
       },
       {
@@ -921,7 +1095,7 @@ function buildStageSafeMission(stage: CurrentStage, payload: GeneratePayload): M
           deliverable: "対象者と困りごとの仮説1組",
           doneCriteria: "対象者と確認したい困りごとが1文で書けている",
           timeEstimate: "10分",
-          example: "対象者: 同じ状況にいる人\n困りごと: 時間がかかること",
+          example: "対象者: 初めて副業の提案先を決める会社員\n困りごと: 何を売るか決められず準備が止まる",
         },
       },
       {
@@ -1413,10 +1587,12 @@ JSON:
 - exampleは改行を含めてよく、そのままコピーして自分用に少し書き換えれば使える形にする
 - exampleは全Missionで必須。空文字は禁止
 - exampleはそのMissionで実際に作る成果物の完成例にする
+- exampleは分類名や見出しだけにせず、対象・場面・問題のいずれかが分かる記入済みの具体例にする
 - exampleはtitle, action, deliverable, doneCriteriaに具体的に対応させる
 - exampleはそのままコピーして書き換えられる本文にする
 - 最重要: exampleはdeliverableと同じ形式で返す。成果物が候補3項目なら、exampleもそのまま入力できる短い候補3項目にする
 - 単語・候補リストの成果物には、単語または短い語句だけを並べる。質問項目や説明文にしない
+- 困りごと候補のexampleは、誰がどこで何に困るかが分かる短文を件数どおり返す
 - 短文リストの成果物には短文だけを並べる。質問リストの成果物には実際に使う質問文を並べる
 - 営業文の成果物には完成した営業文を返す。価格案の成果物には実際の価格案を返す
 - 経験、興味、強み候補、困りごと候補、対象者候補を整理するMissionでは、短い語句で十分なら文章にしない
